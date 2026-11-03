@@ -69,6 +69,25 @@ evaluation seeds.
 - Scope limit: results are from small state-based simulators on CPU. They do not by themselves support
   claims about pixels, large models, or real robots, and write-ups must say so.
 
+### Implementation decisions fixed before results
+
+- **Primary metric:** open-loop rollout error at horizon 10. Horizons 1 and 30 and closed-loop success are
+  reported but do not decide verdicts on their own.
+- **H3 collinearity conditions:** shuffling trajectories leaves `Phi'Phi` unchanged, so it cannot reduce
+  collinearity. H3 instead compares on-trajectory data against random-action and iid-state data, reporting a
+  regularized condition number and participation ratio.
+- **Gradient writes** use normalized steps (NLMS), which favors the gradient side, so an RLS win under H3 is
+  conservative.
+- **Latent size** is 8 rather than T2-Z's 32, since these systems have far fewer hidden parameters.
+- **Latent-free RLS:** `rls` runs on the mean training latent, which may handicap it, so `rls@nolatent` is also
+  reported. H1 is judged on the better of the two, chosen on validation environments.
+- **Sanity gates:** if the oracle planner cannot solve a task, closed-loop results on that task are invalid and
+  are not reported as evidence.
+- **Known weakness:** the out-of-family tier mixes mechanisms, so per-mechanism breakdowns have no confidence
+  intervals and are descriptive only. Test environments differ per training seed.
+- **Bootstrap resolution:** 5 seeds allow only 126 distinct resamples, so the CI is coarse. If a verdict is
+  sensitive to this, add seeds rather than reinterpreting.
+
 ## Shared benchmark
 
 Small vectorized simulators with hidden physical parameters:
