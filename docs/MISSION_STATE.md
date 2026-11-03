@@ -43,17 +43,21 @@ implement rigorously, test in the cloud, and commit to `meta-lucky-builds/intr` 
 
 ## Status
 
-- Done: literature notes in `docs/lit/`, pre-registered hypotheses.
-- In progress: benchmark and Thread A code in `src/intr/`, prior art in `docs/lit/prior_art.md`, hot-feed list
-  in `docs/lit/hot_feed_triage.md`. If these files are missing or incomplete after an interruption, redo that
-  piece.
+- Done: literature notes, prior-art check, pre-registered hypotheses, benchmark and Thread A code.
+- Verified on Colab at commit 28df3b3: 92 tests pass, smoke run completes.
+- Oracle planner gate at full settings: pendulum interp 1.0, extrap about 0.4-0.5, oof about 0.9; puck interp 1.0.
+  A stronger planner does not raise pendulum extrap, so read closed-loop results there against the oracle.
+- Running: Thread A full run on Colab in the background, launched from a notebook cell. Log at
+  `/content/intr/full.log`, results at `/content/intr/results/thread_a/`. Check with a short cell. Each finished
+  job is saved, and it stops starting new jobs after 300 minutes. Colab files are lost if the runtime drops, so
+  copy results into the repo as soon as it finishes.
 
 ## Next steps
 
-1. Review and commit the implementation, then run `tests/` on Colab, then the Thread A smoke run.
-2. Revise `docs/HYPOTHESES.md` for anything prior art already answered.
-3. Run Thread A in full and write up results with verdicts per the protocol.
-4. Start Thread C in parallel, then Thread B if H4 survives, then Threads D and E.
+1. When the full run ends, copy the summary into `results/`, write up verdicts per the protocol, and commit.
+2. Start Thread C in parallel, then Thread B if H4 survives, then Threads D and E. H4 needs its own analysis:
+   the full run does not report calibration.
+3. Read leads between threads.
 
 ## Runtime notes
 
