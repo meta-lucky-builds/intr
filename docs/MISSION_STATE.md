@@ -25,6 +25,22 @@ implement rigorously, test in the cloud, and commit to `meta-lucky-builds/intr` 
 - Commit often so nothing is lost if a limit stops work mid-step.
 - Do not shorten seeds, protocol, or verification to save usage. Delay instead.
 
+## Context habits
+
+- Have agents write findings to files and return short summaries. Read only the sections needed.
+- Keep this file current, so a resume does not need old conversation or re-reading.
+
+## Avoiding local optima
+
+- After each thread's result, decide explicitly: continue, refine, or drop. Record the reason here.
+- Drop or reframe a thread when its kill criterion fires, or when two rounds of fixes produce no effect above
+  the protocol threshold. Do not keep tuning to rescue a hypothesis.
+- A null result is a result. Write it up, then ask what it implies before moving on.
+- New hypotheses and approaches are welcome at any time. Add them to `docs/HYPOTHESES.md` with a kill criterion
+  before testing them, and mark any that came from seeing results as post hoc.
+- Check for new work and unread leads between threads, starting with 2610.42146, 2611.02782, and the 22
+  robotics-tagged papers in `docs/lit/hot_feed_triage.md`.
+
 ## Status
 
 - Done: literature notes in `docs/lit/`, pre-registered hypotheses.
