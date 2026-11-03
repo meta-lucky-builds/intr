@@ -88,6 +88,16 @@ evaluation seeds.
 - **Bootstrap resolution:** 5 seeds allow only 126 distinct resamples, so the CI is coarse. If a verdict is
   sensitive to this, add seeds rather than reinterpreting.
 
+Thread C, fixed before any Thread C run:
+
+- **H7 "stable":** at horizon 100, less than 2x the error of the full recipe, with under 5% of rollouts non-finite
+  or clipped. Rollout error is bounded, so a 2x gap may be unreachable; `two_x_reachable` records that, and a
+  saturated case counts as inconclusive, not as support for either side.
+- **H9 scope:** tests detection only. Allocating loops and gating writes are untested until detection holds.
+- **H9 baseline:** a simplified predictive-likelihood signal (fixed Gaussian plus CUSUM), not ARCADE's full
+  Bayesian decoder. Beating it does not mean beating ARCADE, and write-ups must say so.
+- **Known limit:** training carries state for only 4 steps, so long rollouts also extrapolate state age.
+
 ## Shared benchmark
 
 Small vectorized simulators with hidden physical parameters:
