@@ -30,9 +30,24 @@ the posterior covariance up to `sigma^2`, so `phi' P phi` is epistemic variance 
 paper calibrates adapted-model uncertainty, nobody knows which probe action is informative (T2-Z), and
 OpTTA's optimism has no bound and no infeasible-goal test.
 
-This idea is probably not new in isolation (adaptive last layers exist in meta-learning and adaptive
-control). `docs/lit/prior_art.md` records what is already known, and any hypothesis already answered there
-gets downgraded to a replication.
+This identity is not new: ALPaCA (1807.08912) states it, and Neural-Fly (2205.06908) and Davydov
+(2411.00107) use it. What appears to be new is applying it to the recent test-time world-model methods and
+comparing it directly with latent optimization. Full check in `docs/lit/prior_art.md`.
+
+### Status after the prior-art check (revised before any results existed)
+
+| Hypothesis | Status | Effect on the plan |
+|---|---|---|
+| H1 capacity crossover | open | main contribution |
+| H2 hybrid | open | main contribution |
+| H3 RLS vs gradient | partly answered | keep; the collinearity-controlled test is the new part |
+| H4 calibration | formula known | keep; calibration under each shift tier is what is measured |
+| H5 active probing | method exists | replication; the comparison against random probes is the new part |
+| H6 bounded optimism | parts exist separately | keep; the combination in test-time adaptation is untried |
+| H7 loops x rollout | partly answered | keep; no ablation found |
+| H8 action injection | design exists | keep; the only controlled ablation found is in language models |
+| H9 loop residual signal | open | must beat ARCADE's predictive-likelihood changepoint signal |
+| H10 forgetting | mostly answered | replication against ARCADE (2512.14331); plain forgetting vs reset vs persist is the new part |
 
 ## Protocol for every thread
 
@@ -98,15 +113,17 @@ reach the same rollout error as random probes with fewer trajectories, and impro
 least 10%.
 - Kill: no detectable gain over random probes.
 
-**H6. Bounded optimism.** OpTTA-style unbounded optimism degrades when the goal is infeasible and shows a
-TwoRoom-like decline. Optimism bounded by the RLS confidence set keeps most of OpTTA's gain on feasible
-goals and does not fall below the frozen model on infeasible ones.
+**H6. Bounded optimism.** OpTTA-style unbounded optimism degrades when the goal is infeasible. Optimism
+bounded by the RLS confidence set keeps most of OpTTA's gain on feasible goals and does not fall below the
+frozen model on infeasible ones. OpTTA's TwoRoom decline is not evidence for this, because AdaJEPA, which
+has no optimism term, declines there too.
 - Kill: if unbounded optimism does not degrade on infeasible goals, the bound has nothing to fix.
 
 ### Thread C: looped dynamics
 
-**H7. The product of loops and rollout.** No paper tests many inner loops together with many rollout steps
-with state carried across them. A looped dynamics core stays stable under that product only with all of
+**H7. The product of loops and rollout.** LoopWM designs for carried state and shows no ablation in the
+pages read; TTF (2610.19552) tests loops against 32-128-step rollouts without carried hidden state. So many
+inner loops with many rollout steps and carried state has no controlled test that we found. A looped dynamics core stays stable under that product only with all of
 Solv3R's recipe: input re-injection, state normalization, and training on mixed refinement depths. Removing
 any one degrades long-rollout error by at least 2x.
 - Note the live contradiction: 2610.31943 finds removing normalization extrapolates better. Either outcome
@@ -120,7 +137,8 @@ dynamics. Untested in the notes.
 **H9. Loop residual as a surprise signal.** The per-step fixed-point residual `||z_{k+1} - z_k|| / ||z_k||`
 rises at contact events and under dynamics shift, which would make it usable both to allocate loops
 adaptively and to gate test-time writes. Solv3R showed this correlation only on static multi-view scenes.
-- Kill: AUROC below 0.7 for detecting contact or shift onset.
+- Baseline: ARCADE's predictive-likelihood changepoint signal (2512.14331).
+- Kill: AUROC below 0.7 for detecting contact or shift onset, or no detectable gain over the baseline.
 
 ### Thread D: persistence and switching
 
