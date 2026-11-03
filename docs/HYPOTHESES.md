@@ -88,6 +88,21 @@ evaluation seeds.
 - **Bootstrap resolution:** 5 seeds allow only 126 distinct resamples, so the CI is coarse. If a verdict is
   sensitive to this, add seeds rather than reinterpreting.
 
+H4 and H10, fixed before any run of them:
+
+- **H4 thresholds revised.** The original raw Spearman thresholds (0.5 target, 0.3 kill) are not meaningful alone.
+  Squared error is chi-square noisy even for a perfectly specified model, so those values may be unreachable for
+  any method. Judge against `well_specified_reference`, the Spearman expected if the Bayesian model were true.
+  - Kill, under interpolation, if within-environment Spearman is below half that reference, or if `P` adds nothing
+    beyond the `||phi||^2` baseline.
+  - The raw values are still reported, including against 0.3 and 0.5.
+- **H4 primary:** within-environment ranking. Across-environment ranking is structurally weak because `P` never
+  sees targets, so a poor result there is expected and does not kill H4.
+- **Primary metric exception:** H4 and H10 verdicts use one-step error, since that is what the variance and
+  prequential scores refer to. Horizon 10 is reported for H10. Neither runs closed-loop.
+- **H10 validity:** a win that comes with numerical failures does not count. `P` size is reported and forced resets
+  are counted, because forced resets can flatter forgetting.
+
 Thread C, fixed before any Thread C run:
 
 - **H7 "stable":** at horizon 100, less than 2x the error of the full recipe, with under 5% of rollouts non-finite

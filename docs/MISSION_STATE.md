@@ -45,8 +45,11 @@ implement rigorously, test in the cloud, and commit to `meta-lucky-builds/intr` 
 
 - Done: literature notes, prior-art check, pre-registered hypotheses, benchmark and Thread A code.
 - Verified on Colab at commit 28df3b3: 92 tests pass, smoke run completes.
-- Oracle planner gate at full settings: pendulum interp 1.0, extrap about 0.4-0.5, oof about 0.9; puck interp 1.0.
+- Oracle planner gate at full settings: pendulum interp 1.0, extrap 0.38-0.48, oof 0.86-0.95; puck 1.0 on all tiers.
   A stronger planner does not raise pendulum extrap, so read closed-loop results there against the oracle.
+- Thread C code committed, never run. Sync to Colab and test it only after Thread A finishes, so two jobs on 2 cores
+  do not distort Thread A's wall-clock numbers.
+- H4 and H10 code in progress: `experiments/thread_b.py`. Same rule for running it.
 - Running: Thread A full run on Colab in the background, launched from a notebook cell. Log at
   `/content/intr/full.log`, results at `/content/intr/results/thread_a/`. Check with a short cell. Each finished
   job is saved, and it stops starting new jobs after 300 minutes. Colab files are lost if the runtime drops, so
