@@ -49,14 +49,28 @@ implement rigorously, test in the cloud, and commit to `meta-lucky-builds/intr` 
   A stronger planner does not raise pendulum extrap, so read closed-loop results there against the oracle.
 - Thread C code committed, never run. Sync to Colab and test it only after Thread A finishes, so two jobs on 2 cores
   do not distort Thread A's wall-clock numbers.
-- H4 and H10 code in progress: `experiments/thread_b.py`. Same rule for running it.
+- H4 and H10 code committed in `experiments/thread_b.py`, never run in full.
+- Threads B and C tests and smokes run at low priority from `/content/next`, a separate copy, so `/content/intr` stays
+  unchanged during the Thread A run.
+- Thread A timing: about 1 hour per pendulum seed and slower for puck, so the 300-minute guard stops it at about 2-3 of
+  the 5 required seeds. It needs a way to resume the remaining seeds, and results must leave Colab before any restart.
+  A partial run does not satisfy the protocol and gets no verdicts beyond "preliminary".
 - Running: Thread A full run on Colab in the background, launched from a notebook cell. Log at
   `/content/intr/full.log`, results at `/content/intr/results/thread_a/`. Check with a short cell. Each finished
   job is saved, and it stops starting new jobs after 300 minutes. Colab files are lost if the runtime drops, so
   copy results into the repo as soon as it finishes.
 
+- Threads B and C tests are rerunning at nice 5 in `/content/next` (log `pytest_next.log`). nice 19 starved them: 11 CPU
+  seconds in 30 minutes. Hashes verified. 21 tests had passed before the restart.
+- This contention makes Thread A wall-clock numbers unreliable for that window. Compare compute using pass and write
+  counts, and say so in the write-up.
+- Do not inspect Thread A method comparisons before the run ends. Pipeline sanity on seed 0 pendulum passed.
+
 ## Next steps
 
+0. On each heartbeat: check `/content/next/pytest_next.log`. When pytest ends, send failures to an Opus agent to fix, then
+   run `thread_b.py --smoke --threads 1` and `thread_c.py --smoke --threads 1` at nice 5, in sequence. If the Thread A
+   process has stopped, go to step 1, adding a way to resume the remaining seeds if fewer than 5 finished.
 1. When the full run ends, copy the summary into `results/`, write up verdicts per the protocol, and commit.
 2. Start Thread C in parallel, then Thread B if H4 survives, then Threads D and E. H4 needs its own analysis:
    the full run does not report calibration.
