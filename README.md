@@ -8,7 +8,7 @@ This repo tests those ideas with pre-registered hypotheses, kill criteria, paire
 
 **Headline:** on pendulum from state, the two main methods trade places as the physics becomes unfamiliar. From pixels, that crossover disappeared: the latent won everywhere on prediction, yet that did not produce better control.
 
-> **Scope:** small simulators, small models and our own renderer. This is not a published benchmark, and nothing here is a claim about large models or real robots. Pixel verdicts cover pendulum only.
+> **Scope:** small simulators, small models and my own renderer. This is not a published benchmark, and nothing here is a claim about large models or real robots. Pixel verdicts cover pendulum only.
 
 ## Top findings
 

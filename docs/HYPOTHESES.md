@@ -167,7 +167,7 @@ has no optimism term, declines there too.
 
 **H7. The product of loops and rollout.** LoopWM designs for carried state and shows no ablation in the
 pages read; TTF (2610.19552) tests loops against 32-128-step rollouts without carried hidden state. So many
-inner loops with many rollout steps and carried state has no controlled test that we found. A looped dynamics core stays stable under that product only with all of
+inner loops with many rollout steps and carried state has no controlled test that I found. A looped dynamics core stays stable under that product only with all of
 Solv3R's recipe: input re-injection, state normalization, and training on mixed refinement depths. Removing
 any one degrades long-rollout error by at least 2x.
 - Note the live contradiction: 2610.31943 finds removing normalization extrapolates better. Either outcome
@@ -261,7 +261,7 @@ enough windows for this to matter. Predictions:
 
 ### Thread P: pixels on a rented GPU
 
-Do the state-based findings survive when the model must see images? Small models and our own batched renderer, chosen for
+Do the state-based findings survive when the model must see images? Small models and my own batched renderer, chosen for
 speed and exact control of hidden physics. This is not a published benchmark, and write-ups must say so.
 
 Fixed design:
