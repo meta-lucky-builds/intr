@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 300" role="img" aria-labelledby="t d" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+  <title id="t">Prediction error and control success on pendulum from pixels, familiar physics</title>
+  <desc id="d">The latent has the lowest prediction error (0.251, against 0.401 for RLS and 0.416 without adaptation) but also the lowest control success (0.733, against 0.783 for RLS and 0.807 without adaptation).</desc>
+  <rect width="760" height="300" fill="#ffffff"/>
+  <g font-size="15" font-weight="600" fill="#1f2328" text-anchor="middle">
+    <text x="205" y="28">Prediction error (lower is better)</text>
+    <text x="570" y="28">Control success (higher is better)</text>
+  </g>
+  <g stroke="#d0d7de" stroke-width="1">
+    <line x1="50" y1="240" x2="360" y2="240"/><line x1="415" y1="240" x2="725" y2="240"/>
+  </g>
+  <g fill="#8c959f">
+    <rect x="75" y="157" width="70" height="83"/><rect x="440" y="79" width="70" height="161"/>
+  </g>
+  <g fill="#bc4c00">
+    <rect x="170" y="160" width="70" height="80"/><rect x="535" y="83" width="70" height="157"/>
+  </g>
+  <g fill="#0969da">
+    <rect x="265" y="190" width="70" height="50"/><rect x="630" y="93" width="70" height="147"/>
+  </g>
+  <g font-size="13" font-weight="600" fill="#1f2328" text-anchor="middle">
+    <text x="110" y="151">0.416</text><text x="205" y="154">0.401</text><text x="300" y="184">0.251</text>
+    <text x="475" y="73">0.807</text><text x="570" y="77">0.783</text><text x="665" y="87">0.733</text>
+  </g>
+  <g font-size="13" fill="#1f2328" text-anchor="middle">
+    <text x="110" y="260">No adaptation</text><text x="205" y="260">Better RLS</text><text x="300" y="260">Latent</text>
+    <text x="475" y="260">No adaptation</text><text x="570" y="260">Better RLS</text><text x="665" y="260">Latent</text>
+  </g>
+  <text x="380" y="288" font-size="11" fill="#57606a" text-anchor="middle">Pendulum from pixels, familiar physics, 10 seeds. Success gaps to RLS are below the effect rule.</text>
+</svg>

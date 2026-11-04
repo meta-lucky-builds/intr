@@ -1,12 +1,23 @@
 # intr: when should a world model adapt, and how?
 
+**A result that held from state broke from pixels, and the best predictor did not control any better.**
+
 [![ci](https://github.com/meta-lucky-builds/intr/actions/workflows/ci.yml/badge.svg)](https://github.com/meta-lucky-builds/intr/actions/workflows/ci.yml)
+![tests](https://img.shields.io/badge/tests-674%20passing-2ea44f)
+![pre-registered](https://img.shields.io/badge/hypotheses-pre--registered-0969da)
+![license](https://img.shields.io/badge/license-MIT-57606a)
 
 A robot's world model is wrong the moment the world changes: a heavier load, a stiff joint, a reversed motor. Recent methods fix this at test time, using different amounts of freedom. Some tune a small latent vector. Others rewrite the model's last-layer weights in closed form.
 
-This repo tests those ideas with pre-registered hypotheses, kill criteria, paired statistics and raw records. It compares them on small simulated systems, first from physical state and then from pixels.
+This repo puts those ideas up against kill criteria written before the results existed. It compares them on small simulated systems, first from physical state and then from pixels.
 
-**Headline:** on pendulum from state, the two main methods trade places as the physics becomes unfamiliar. From pixels, that crossover disappeared: the latent won everywhere on prediction, yet that did not produce better control.
+| | |
+|---|---|
+| **Three headline results** | The state crossover vanished on pixels. Lower prediction error did not bring better control. Pixel encoders may bury the signal adaptation needs |
+| **Hypotheses tested** | 14 scored, plus 2 descriptive studies. 9 were killed by their own registered criteria |
+| **Evidence** | 3 simulated families and 20 training seeds, with raw per-seed records committed |
+| **Rechecked** | 105 pixel comparisons recomputed from raw records, with no disagreement |
+| **Engineering** | 674 passing tests, a batched pixel renderer, a resumable multi-GPU scheduler (not yet run on a real GPU), and a 45-job cloud pipeline |
 
 > **Scope:** small simulators, small models and my own renderer. This is not a published benchmark, and nothing here is a claim about large models or real robots. Pixel verdicts cover pendulum only.
 
@@ -41,6 +52,8 @@ The registered kill fired: one method won both tiers.
 - The unfamiliar tier keeps normal mass, length and damping variation, which also helps the latent. Its win comes mostly from torque bias (17.7%) and less from action flip (8.9%).
 
 ### 3. Better prediction did not mean better control
+
+![Prediction error and control success on pendulum from pixels](docs/figures/control_gap.svg)
 
 Closed-loop success on the same pixel run. This did not decide any verdict, but it is the most surprising result.
 
@@ -115,7 +128,7 @@ An RLS write is the posterior mean of Bayesian linear regression, so `phi' P phi
 - **A high bar:** a win needs a paired bootstrap 95% CI that excludes 0 and at least a 10% reduction. Otherwise it counts as no detectable difference.
 - **Clean selection:** hyperparameters are chosen on validation environments only, and methods are compared on the same adaptation data.
 - **Gates before verdicts:** if the true-model planner cannot solve a task, or a model cannot support the test, that result is not counted as evidence.
-- **A rechecked pixel run:** a separate agent recomputed 105 comparisons from the per-seed records and found no disagreement with the stored summary. It did not re-run the experiments.
+- **A rechecked pixel run:** a separate audit recomputed 105 comparisons from the per-seed records and found no disagreement with the stored summary. It did not re-run the experiments.
 
 **Known limits:** one family carries the main verdicts. Five seeds give a coarse bootstrap in round one. Some rule wordings needed a reading, and these are recorded in [RESULTS.md](docs/RESULTS.md). The pixel run used cloud CPU, and the multi-GPU path has never run on a real GPU.
 
@@ -152,8 +165,6 @@ The recorded pixel run is commit `83be5d1`, run `41841227508`. Experiment code u
 2. Can multi-step training lift the signal while control still acts every 0.1 s? This could test the noise explanation and might bring drone through the gate. It is not registered yet.
 3. Does the state crossover hold on a second system where both methods work?
 
-## Provenance
+## License
 
-This work was run by Claude agents under human direction. Commits carry co-author lines, and the earlier working notes remain in the git history and on the `mission/world-model-techniques` branch.
-
-MIT licensed.
+MIT
