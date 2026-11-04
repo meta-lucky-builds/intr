@@ -1,0 +1,16 @@
+Thread P verdicts (decoded physical error, horizon 10; K = 1 decides, K = 3 reported). Scope: own renderer, small models, not a published benchmark.
+
+hypothesis family    gated outcome (K=1)                  rule outcome (K=1)                   K=3 rule                             deciding numbers (K=1)
+----------------------------------------------------------------------------------------------------------------------------------------------------------
+H1p        pendulum  killed_one_method_wins_both          killed_one_method_wins_both          not_supported_no_crossover           interp 0.251 vs 0.401, 37%; oof 0.718 vs 0.816, 12%
+H12p       pendulum  supported                            supported                            supported                            interp 0.253 vs 0.251, 1%; extrap 0.496 vs 0.536, 8%; oof 0.778 vs 0.718, 8%
+H4p        pendulum  killed                               killed                               killed                               P 0.234, ref 0.118, phi 0.225
+H3p        pendulum  not_killed_expectation_differs       not_killed_expectation_differs       -                                    interp 0.401 vs 0.410, 2%; extrap 0.671 vs 0.688, 2%; oof 0.816 vs 0.839, 3%
+H5p        pendulum  killed                               killed                               killed                               interp 0.390 vs 0.394, 1%; extrap 0.680 vs 0.667, 2%; oof 0.809 vs 0.786, 3%
+H14p       pendulum  killed                               killed                               killed                               vs no-error 0.455 vs 0.477, 5%; vs latent 0.455 vs 0.251, 45%; oof vs RLS 0.812 vs 0.816, 1%
+
+Gate GP:
+  pendulum passes Gate GP.
+  pendulum: selections at a grid edge: ['latent_opt@latent.lr_scale.high']
+
+Descriptive, no verdict: H16 appearance and H17 latent size are in summary.json.

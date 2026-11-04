@@ -1,0 +1,25 @@
+{
+ "fingerprint": "bfee057fec6212ac",
+ "status": "ok",
+ "rungs": {
+  "pendulum": 0
+ },
+ "skipped": {},
+ "gates": {
+  "pilot_pendulum_r0": {
+   "frozen_closed_loop_interp": 0.875,
+   "oracle_interp": 0.925000011920929,
+   "latent_reduction": 0.3896642826077801,
+   "n_usable_seeds": 1,
+   "checks": {
+    "frozen_closed_loop_interp": true,
+    "oracle_interp": true,
+    "latent_lowers_prediction_loss": true,
+    "enough_usable_seeds": true,
+    "collapse": true
+   },
+   "pass": true
+  }
+ },
+ "pilot_seed": 1010
+}

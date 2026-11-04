@@ -501,3 +501,36 @@ Checks that passed: source hashes, bootstrap reproduction, RLS order invariance,
 4. H5 and H6 can proceed on pendulum only, on ranking, with the coverage caveat above.
 
 Changes to any threshold or prediction need their own commit per `MISSION_STATE.md`.
+
+## Thread P: pendulum on pixels (run 41841227508, seeds 10-19)
+
+Fingerprint bfee057fec6212ac, commit 83be5d1, on GitHub Actions CPU runners, not a GPU, with no setting changed. Raw records are in
+`results/thread_p/pendulum_41841227508/`. Own renderer and small models, not a published benchmark. Pendulum only: drone and puck failed Gate GP and give no
+verdict. Gate GP passes on every seed (frozen 0.807, oracle 0.995, reduction 37.9%). An independent audit recomputed 105 comparisons from the per-seed records
+and found no numeric or verdict disagreement with `summary.json`.
+
+Decoded physical error at horizon 10, K = 1 decides. a vs b, lower is better; reduction is relative to the worse side.
+
+| Hypothesis | Deciding comparison | a | b | 95% CI of a - b | Reduction | Outcome |
+|---|---|---|---|---|---|---|
+| H1p | latent vs better RLS, interp | 0.251 | 0.401 | [-0.163, -0.138] | 37.3%, latent, 10/10 seeds | Killed: latent wins both tiers |
+| H1p | latent vs better RLS, oof | 0.718 | 0.817 | [-0.110, -0.087] | 12.1%, latent, 10/10 seeds | |
+| H12p | hybrid vs better single, interp | 0.253 | 0.251 | [+0.000, +0.003] | 0.6%, hybrid worse | Supported, by the 10% threshold only |
+| H12p | same, extrap | 0.496 | 0.536 | [-0.048, -0.035] | 7.6%, hybrid better | |
+| H12p | same, oof | 0.778 | 0.718 | [+0.046, +0.076] | 7.8%, hybrid worse, 0/10 seeds better | |
+| H4p | P vs phi on 1 - Spearman, interp | 0.766 | 0.775 | [-0.020, +0.000] | 1.1% | Killed: does not add beyond the norm |
+| H3p | RLS vs tuned gradient, interp, extrap, oof | | | | 2.3%, 2.4%, 2.7%, RLS | Not killed; the expected RLS win on shift did not appear |
+| H5p | D-optimal vs random, interp, extrap, oof | | | | 1.2% better, 2.0% worse, 2.8% worse | Killed: coverage moved, no error gain |
+| H14p | error-fed vs no-error, interp | 0.455 | 0.477 | [-0.031, -0.016] | 4.8% | Killed |
+
+Caveats that limit these verdicts:
+- **The round-one crossover did not replicate on pixels at K = 1.** At K = 3 latent is still better on oof in 10/10 seeds (0.702 vs 0.757, 7.2%), under the threshold, so that
+  label is no crossover, not a kill. RLS never wins.
+- **RLS is close to frozen at K = 1:** 1.4% on interp and 0.7% on oof, both no detectable difference, with 40 transitions for a 64-feature readout. H1p on oof is nearly latent vs frozen.
+- **Open loop is not closed loop.** Interp success: oracle 0.995, frozen 0.807, RLS 0.783, latent 0.733. Oof: oracle 0.971, frozen 0.310, RLS 0.310, latent 0.260.
+  Latent's lower open-loop error does not produce better control, and the cause is unknown. Differences from RLS are under the effect rule.
+- **The oof tier keeps training-range hidden-parameter variation,** so latent can gain there through ordinary inference. By mechanism (descriptive): torque bias 17.7%, action flip 8.9%. No arm separates these effects.
+- **H12p is the weakest verdict:** hybrid is worse on oof in all 10 seeds, and worse than frozen on action flip (1.078 vs 1.022).
+- **H14p's gain looks like a training difference:** most of the gap to no-error also appears without any belief. All error-fed arms are worse than frozen on interp, with a different core and fewer steps.
+- **H3p's gradient grid** sits at an edge in 7 of 10 seeds, which can only handicap gradient.
+- **Metric saturation** compresses shifted tiers at horizon 10. It does not hide an RLS win: latent leads at horizons 1 and 10 in all seeds.
