@@ -283,7 +283,7 @@ def test_smoke_pilot_numbers_do_not_depend_on_the_diagnostic(monkeypatch):
     assert real["gate"] == without["gate"] and real["collapse"] == without["collapse"]
     assert real["oracle"] == without["oracle"] and real["frozen"] == without["frozen"]
     assert real["train"]["exact_train_loss"] == without["train"]["exact_train_loss"]
-    assert real["train"]["latent_r2"] == without["train"]["latent_r2"]
+    assert real["train"]["latent_r2"] == pytest.approx(without["train"]["latent_r2"], rel=1e-9)  # a threaded solve differs in the last bits between runs
     assert real["train"]["jepa"]["log"] == without["train"]["jepa"]["log"]
 
     assert real["action_repeat"] == 1
