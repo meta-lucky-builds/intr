@@ -284,7 +284,18 @@ Predictions:
 - **H16 appearance shift (exploratory).** Add a tier changing appearance only (colours, background), with physics unchanged.
   Writes to the dynamics readout cannot repair a shifted encoder, so expect neither the latent nor RLS to recover. Reported as
   descriptive, with no verdict.
-- **H14p:** runs only if H14 survives on state-based data.
+- **H14p (changed before any H14 result).** The state-based run was dropped to focus on this thread, so H14 is tested here
+  directly: an error-fed recurrent core, with no test-time gradients, against `latent_opt`, a no-error control, and a
+  shuffled-error control. Predictions: it matches `latent_opt` on interp, beats both controls, and loses to RLS out-of-family.
+  Kill: no better than the no-error control on interp.
+- **H5p:** after the same number of adaptation transitions, D-optimal probes beat random-action probes for RLS at K = 1, and
+  the coverage measure moves as intended, with the iid-state ceiling reported. A result with coverage unmoved is
+  inconclusive. Kill: coverage moves, with no detectable error gain.
+- **H3p:** RLS vs tuned gradient writes on the same data. Tuned means chosen on validation. Round-one expectation: tuned
+  gradient matches in-family, RLS wins on shifted data, at much lower write cost. Kill: tuned gradient wins any tier.
+- **H17 capacity curve (descriptive).** Latent size 2, 8, 32, on three seeds per family. Tests the capacity account directly:
+  larger latents should not rescue out-of-family error. Reported with no verdict.
+- The state-based Thread F and H14 runs are stopped. Their code remains in the repo, unused by this thread where noted.
 
 ### Parked
 
