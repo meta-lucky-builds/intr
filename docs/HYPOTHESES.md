@@ -390,6 +390,32 @@ Probe R2: puck `idm` agent position 0.99, agent velocity 0.90, puck velocity 0.7
 - **H14p does not fit at repeat 3:** its core trains on phases up to 50 + 30 steps, and trajectories of 20 steps refuse phases longer than that, while its test
   filter takes 40 steps. So repeat 3 runs only on the repair path, and adopting it would first need a decision on H14p.
 
+#### Round-two outcome (run 41827985599, seed 1010, 32 px, post hoc from here)
+
+| Family | Arm | Frozen | Oracle | Reduction | Noise-floor ratio | Gate |
+|---|---|---|---|---|---|---|
+| pendulum | idm, repeat 1 | 0.825 | 0.925 | 38.6% | 0.034 | pass |
+| pendulum | idm, repeat 3 | 0.10 | 0.95 | 27.8% | 0.036 | fail |
+| pendulum | state, repeat 3 | 0.05 | 0.95 | 27.6% | 0.037 | fail |
+| drone | idm, repeat 1 | 0.5 | 1.0 | 6.6% | 1.06 | fail |
+| drone | idm, repeat 3 | 0.175 | 1.0 | 12.1% | 0.22 | fail |
+| drone | state, repeat 3 | 0.075 | 1.0 | 13.1% | 0.18 | fail |
+| puck | idm, repeat 1 | 0.175 | 1.0 | 0.6% | 1.13 | fail |
+| puck | idm, repeat 3 | 0.15 | 1.0 | 1.2% | 0.41 | fail |
+| puck | state, repeat 3 | 0.125 | 1.0 | 3.5% | 0.34 | fail |
+
+- **Stopping rule:** no setting passes on pendulum and one more family. Repair is closed. The GPU run is pendulum only, default objective, repeat 1. Drone and
+  puck are ungated and give no verdict. Thresholds did not change.
+- **Falsifier:** not triggered. The ratio at repeat 1 is about 1.1 on drone and puck, against 0.03 on the pendulum that passes. This fits the noise-floor
+  explanation but does not confirm it, by the limits recorded above.
+- **Reduction prediction:** held in direction on both families. Drone crosses 10%. Puck stays far below it, so the floor is not the whole story on puck.
+- **Cost of repeat 3:** frozen closed-loop success fell on all three families, most on pendulum (0.825 to 0.10), where speed R2 fell from 0.997 to 0.18. Oracle
+  stayed at 0.95 or above, so the loss comes from the learned model, not the slower control. Repeat 3 also changes the physical span of the probe's tiers, so
+  that R2 is not strictly comparable.
+- **Cross-check:** `idm` repeat 1 reproduced round one exactly on pendulum and drone. Puck did not: frozen 0.175 against 0.075, reduction 0.61% against 0.59%, on the
+  same code and seed. So puck's closed-loop figure moves with tiny numeric changes, and one seed of it is weak evidence.
+- **Parked, not registered:** lift the signal without slowing control, by training the core on multi-step targets while acting every 0.1 s. Only after the GPU run.
+
 ### Parked
 
 - **H3's collinearity clause:** needs a real manipulation, such as controlling N against F with a check that the measures move.
