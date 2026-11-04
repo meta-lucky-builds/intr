@@ -1,0 +1,49 @@
+# Free real-settings pilot on cloud CPU: does the pixel model pass Gate GP at all? Only its pilot stage is used. The later
+# stages it may begin are cut off by the time limit, and their seeds are not scored. Commits nothing.
+name: pixel-pilot
+
+on:
+  push:
+    branches:
+      - mission/world-model-techniques
+    paths:
+      - .github/workflows/pixel-pilot.yml
+
+permissions:
+  contents: read
+
+jobs:
+  pilot:
+    name: pilot ${{ matrix.family }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 165
+    strategy:
+      fail-fast: false
+      matrix:
+        family: [pendulum, drone, puck]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: python -m pip install "torch==2.11.0" --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple numpy pytest
+      - name: Run until the time limit
+        timeout-minutes: 150
+        continue-on-error: true
+        env:
+          INTR_P_DETACHED: "1"
+        run: bash scripts/gpu_run.sh --allow-cpu --skip-tests --no-publish --families ${{ matrix.family }}
+      - name: Upload pilot records
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pilot-${{ matrix.family }}
+          path: |
+            results/thread_p_gpu/**/*.txt
+            results/thread_p_gpu/**/*.json
+            results/thread_p_gpu/**/*.log
+          if-no-files-found: warn
+          retention-days: 14
