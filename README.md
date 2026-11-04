@@ -1,8 +1,8 @@
-# intr: when should a world model adapt, and how?
+# World model adaptation: when should a world model adapt, and how?
 
 **A result that held from state broke from pixels, and the best predictor did not control any better.**
 
-[![ci](https://github.com/meta-lucky-builds/intr/actions/workflows/ci.yml/badge.svg)](https://github.com/meta-lucky-builds/intr/actions/workflows/ci.yml)
+[![ci](https://github.com/meta-lucky-builds/world-model-adaptation/actions/workflows/ci.yml/badge.svg)](https://github.com/meta-lucky-builds/world-model-adaptation/actions/workflows/ci.yml)
 ![tests](https://img.shields.io/badge/tests-674%20passing-2ea44f)
 ![pre-registered](https://img.shields.io/badge/hypotheses-pre--registered-0969da)
 ![license](https://img.shields.io/badge/license-MIT-57606a)
@@ -135,7 +135,7 @@ An RLS write is the posterior mean of Bayesian linear regression, so `phi' P phi
 ## Reproduce
 
 ```bash
-git clone https://github.com/meta-lucky-builds/intr && cd intr
+git clone https://github.com/meta-lucky-builds/world-model-adaptation && cd world-model-adaptation
 pip install -e ".[test]"
 pytest -q
 bash scripts/gpu_run.sh --smoke

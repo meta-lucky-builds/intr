@@ -15,7 +15,7 @@ Open the Actions tab, choose `pixel-pendulum`, and run it with mode `full`. Resu
 The repo is public, so no token is needed:
 
 ```bash
-git clone https://github.com/meta-lucky-builds/intr && cd intr && bash scripts/gpu_run.sh --families pendulum
+git clone https://github.com/meta-lucky-builds/world-model-adaptation && cd world-model-adaptation && bash scripts/gpu_run.sh --families pendulum
 ```
 
 The run keeps going if the terminal closes. In a notebook, start it from a terminal, because the script watches the log until the run ends. To watch again:
