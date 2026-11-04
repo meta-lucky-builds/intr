@@ -100,6 +100,8 @@ implement rigorously, test in the cloud, and commit to `meta-lucky-builds/intr` 
 
 ## Current focus (user instruction, overrides older next steps)
 
+The pendulum run is on Actions because no GPU is available: `.github/workflows/pixel-pendulum.yml`, run 41841227508.
+
 Only Thread P: small pixel experiments on a GPU the user will rent, multi-GPU, one command in a Jupyter terminal. Do not start
 Thread F, Thread E, or other side work. Steps: finish code (`src/intr/pixel/`, `experiments/thread_p.py`, `scripts/gpu_run.sh`,
 `docs/GPU_RUN.md`); test on cloud CPU through Actions; give the user the command only after tests and smoke pass; score results
