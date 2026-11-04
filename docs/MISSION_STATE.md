@@ -110,6 +110,11 @@ the repo or the chat. Gate G1 passed on seeds 5-9: puck with `capacity_updates` 
 (pilot run 41789738053). An encoder repair is under test on seed 1010 through `.github/workflows/pixel-repair.yml`, registered in the
 Thread P section of `docs/HYPOTHESES.md`. `full_config()` stays unchanged until the user chooses a variant from those results.
 
+Round one (run 41811136896): neither `idm` nor `state` meets the decision rule; only pendulum passes. Round two is the last repair round: action repeat 3
+with a noise-floor diagnostic, through `.github/workflows/pixel-repair2.yml`, registered in the same section. If no setting passes on pendulum and one more
+family, the GPU run is pendulum only at the default objective and repeat 1, and drone and puck are reported as ungated. Repeat 3 does not fit H14p's
+error-fed core, so adopting it needs a decision on that first.
+
 ## Current run
 
 Pilot succeeded: seed 0 took about 3 minutes for pendulum and 5 for puck, against over an hour on Colab. The pendulum latent R2
@@ -122,4 +127,4 @@ Colab tools disappeared from the session after the pilot. Actions does not need 
 ## Runtime notes
 
 - Colab is CPU only: 2 cores, 12 GB RAM, torch 2.11. Its session depends on the browser tab staying connected.
-- The repo is private, and no token goes into Colab. Code reaches Colab by writing files from notebook cells.
+- The repo is public, and no token goes into Colab. Code reaches Colab by writing files from notebook cells.

@@ -42,7 +42,7 @@ from intr.eval import HORIZONS, START_STEPS, CEMConfig, PersistencePredictor, co
 from intr.looped import SequenceData, saturation_reference  # noqa: E402
 from intr.models import clip_obs  # noqa: E402
 from intr.pixel import rules  # noqa: E402
-from intr.pixel.config import EMBED_DIMS, PROBE_TRAJECTORIES, REPAIR_VARIANTS, Rung, ThreadPConfig, config_for  # noqa: E402
+from intr.pixel.config import ACTION_REPEATS, EMBED_DIMS, PROBE_TRAJECTORIES, REPAIR_VARIANTS, Rung, ThreadPConfig, config_for, decision_steps  # noqa: E402
 from intr.pixel.design import collect_dopt, coverage_measures, design_predictor  # noqa: E402
 from intr.pixel.error_fed import Belief, ErrorFedConfig, ErrorFedPredictor, ErrorFedTrainConfig, other_env_donor, run_filter, train_error_fed  # noqa: E402
 from intr.pixel.planning import EvalContext, Windows, closed_loop_model, closed_loop_oracle, decoded_errors, errors_record, make_windows, record_of  # noqa: E402
@@ -61,6 +61,7 @@ from intr.pixel.world import (  # noqa: E402
     exact_train_losses,
     fit_probe,
     model_config,
+    noise_floor,
     observe,
     on_device,
     probe_r2,
@@ -151,7 +152,7 @@ def build_world(family: str, seed: int, cfg: ThreadPConfig, rung: Rung, device) 
     started = time.perf_counter()
     burn = cfg.stack - 1
     env = make_env(family, cfg.train_envs, "train", derive_seed("train_envs", seed))
-    env_dev = env_on(env, device)
+    env_dev = env_on(env, device, cfg.action_repeat)
     traj = collect_mixed_states(env, env_dev, cfg.train_traj, cfg.train_steps, env.data_policies, make_generator("data", family, seed), burn, device)
     frames = render(family, traj.states, rung.size)
     embed_dim = EMBED_DIMS[family]
@@ -241,7 +242,7 @@ class TierData:
 
 def collect_tier(env, family: str, tag, cfg: ThreadPConfig, device) -> tuple:
     """Same tag, same trajectories: the states of a tier do not depend on which method or which palette reads them."""
-    env_dev = env_on(env, device)
+    env_dev = env_on(env, device, cfg.action_repeat)
     burn = cfg.stack - 1
     holdout = collect_mixed_states(env, env_dev, cfg.holdout_traj, cfg.holdout_steps, (env.default_probe, "iid"), make_generator(tag, "holdout"), burn, device)
     probes = collect_states(env, env_dev, PROBE_TRAJECTORIES, cfg.adapt_steps, env.default_probe, make_generator(tag, "probe"), burn, device)
@@ -429,11 +430,11 @@ def run_h4(world: World, label: str, lambda_: float, val: list[TierData], tiers:
 
 
 def cem_for(env, cfg: ThreadPConfig) -> CEMConfig:
-    return CEMConfig(horizon=cfg.horizon_override or env.plan_horizon, n_candidates=cfg.n_candidates, n_elites=cfg.n_elites, n_iters=cfg.n_iters)
+    return CEMConfig(horizon=cfg.horizon_override or decision_steps(env.plan_horizon, cfg.action_repeat), n_candidates=cfg.n_candidates, n_elites=cfg.n_elites, n_iters=cfg.n_iters)
 
 
 def episode_steps(env, cfg: ThreadPConfig) -> int:
-    return cfg.episode_override or env.episode_steps
+    return cfg.episode_override or decision_steps(env.episode_steps, cfg.action_repeat)
 
 
 def run_closed(world: World, env, env_dev, predictor, tag, cfg: ThreadPConfig, oracle_mask: Tensor | None, palette: Tensor | None = None) -> dict:
@@ -486,7 +487,7 @@ def run_main(family: str, seed: int, cfg: ThreadPConfig, rung: Rung, device, run
     for tier in ("train", "interp", "extrap", "oof"):
         data_tier, env, tag = eval_tier(world, tier, cfg)
         tier_cache[tier] = tier_to_dict(data_tier)
-        env_dev = env_on(env, device)
+        env_dev = env_on(env, device, cfg.action_repeat)
         record = {
             "mechanisms": env.mechanisms,
             "persistence": errors_record(decoded_errors(PersistencePredictor(), data_tier.windows, world.ctx), env.mechanisms),
@@ -571,9 +572,9 @@ def run_main(family: str, seed: int, cfg: ThreadPConfig, rung: Rung, device, run
 def run_pilot(family: str, seed: int, cfg: ThreadPConfig, rung: Rung, device) -> dict:
     """Validation only. No test tier is created, so the ladder cannot see test data."""
     started = time.perf_counter()
-    world, _, train_record = build_world(family, seed, cfg, rung, device)
+    world, train_observed, train_record = build_world(family, seed, cfg, rung, device)
     val_in, env = val_tier(world, "val_in", cfg)
-    env_dev = env_on(env, device)
+    env_dev = env_on(env, device, cfg.action_repeat)
     tag = ("val", family, seed, "val_in")
     oracle = run_oracle(env, env_dev, tag, cfg)
     result = adapt("frozen", world.backbones["latent"], val_in.adaptation(1))
@@ -583,13 +584,16 @@ def run_pilot(family: str, seed: int, cfg: ThreadPConfig, rung: Rung, device) ->
     gate = rules.gate_gp([frozen["success_rate"]], [oracle["success_rate"]], [losses["latent"]], [losses["nolatent"]], 1, 1)
     gate["checks"]["collapse"] = collapse["passes"]
     gate["pass"] = all(gate["checks"].values())
+    floor = noise_floor(train_observed, cfg.probe_hidden, cfg.probe_steps, cfg.probe_batch, seed, device)  # last, so no number above can depend on it
     return {
         "kind": "pilot",
         "family": family,
         "seed": seed,
         "rung": asdict(rung),
         "repair_variant": cfg.repair_variant,
+        "action_repeat": cfg.action_repeat,
         "jepa_settings": asdict(cfg.jepa),
+        "noise_floor": floor,
         "gate": gate,
         "collapse": collapse,
         "oracle": oracle["success_rate"],
@@ -630,7 +634,7 @@ def run_h5(family: str, seed: int, cfg: ThreadPConfig, device, run_dir: Path) ->
     low_cpu, high_cpu = world.ctx.emb_low.cpu(), world.ctx.emb_high.cpu()
 
     def collect_arm(arm: str, env, tag, n_traj: int) -> Observed:
-        env_dev = env_on(env, device)
+        env_dev = env_on(env, device, cfg.action_repeat)
         if arm == "iid_state":
             traj = collect_iid_states_with_burn(env, env_dev, n_traj * cfg.adapt_steps, make_generator(tag, "iid_state"), burn, device)
             return observe(traj, family, world.rung.size, world.encoder, world.stack)
@@ -671,7 +675,7 @@ def run_h5(family: str, seed: int, cfg: ThreadPConfig, device, run_dir: Path) ->
     for tier in rules.VERDICT_TIERS:
         env = make_env(family, cfg.n_eval_envs, tier, derive_seed("test_envs", seed))
         tag = ("test", family, seed, tier)
-        env_dev = env_on(env, device)
+        env_dev = env_on(env, device, cfg.action_repeat)
         data_tier = tier_from_dict(cache["tiers"][tier], device)
         holdout_flat = data_tier.holdout_flat()
         arms = {"default": data_tier.probes}
@@ -740,7 +744,7 @@ def run_h14(family: str, seed: int, cfg: ThreadPConfig, device, run_dir: Path) -
     for tier in rules.VERDICT_TIERS:
         env = make_env(family, cfg.n_eval_envs, tier, derive_seed("test_envs", seed))
         tag = ("test", family, seed, tier)
-        env_dev = env_on(env, device)
+        env_dev = env_on(env, device, cfg.action_repeat)
         data_tier = tier_from_dict(cache["tiers"][tier], device)
         donor = other_env_donor(env.n_envs)
         mask = oracle_mask_from(main, tier)
@@ -844,7 +848,7 @@ def run_preflight(cfg: ThreadPConfig, device) -> dict:
         checks["gpu"] = torch.cuda.get_device_name(0)
     for family in cfg.families:
         env = make_env(family, 8, "interp", "preflight")
-        env_dev = env_on(env, device)
+        env_dev = env_on(env, device, cfg.action_repeat)
         state = env.reset(1, make_generator("preflight", family)).to(device)
         frames = render(family, state, cfg.rungs[0].size)
         if int(frames.max()) == int(frames.min()):
@@ -971,11 +975,14 @@ def main(argv=None) -> int:
     parser.add_argument("--seconds", type=float, default=15.0)
     parser.add_argument("--jepa-only", action="store_true")
     parser.add_argument("--repair-variant", default=None, choices=sorted(REPAIR_VARIANTS))
+    parser.add_argument("--action-repeat", type=int, default=1, choices=ACTION_REPEATS)
     args = parser.parse_args(argv)
 
-    cfg = config_for(args.mode, args.repair_variant)
-    if args.repair_variant and (args.kind != "pilot" or args.seed != cfg.pilot_seed):
-        parser.error(f"a repair variant runs only the pilot job on seed {cfg.pilot_seed}, got {args.kind} on seed {args.seed}")
+    if args.action_repeat != 1 and not args.repair_variant:
+        parser.error("an action repeat above 1 runs only on the repair path")
+    cfg = config_for(args.mode, args.repair_variant, args.action_repeat)
+    if args.repair_variant and args.kind != "preflight" and (args.kind != "pilot" or args.seed != cfg.pilot_seed):
+        parser.error(f"a repair variant runs only preflight and the pilot job on seed {cfg.pilot_seed}, got {args.kind} on seed {args.seed}")
     if args.families:
         cfg.families = args.families
     torch.set_num_threads(int(os.environ.get("INTR_THREADS", cfg.threads)))

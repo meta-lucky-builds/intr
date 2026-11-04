@@ -10,6 +10,7 @@ puck passes its gate only with capacity_updates (seeds 5-9), and drone and pendu
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass, field, replace
 
 FAMILIES = ("pendulum", "drone", "puck")
@@ -19,6 +20,12 @@ NO_WRITE_LAMBDA = 1e12  # intr.ebayes.NO_WRITE_LAMBDA; a test checks they agree
 PROBE_TRAJECTORIES = 3  # always drawn, then cut to K, so K = 1 data never depends on which K a config lists (Problem 12)
 EMBED_DIMS = {"pendulum": 16, "drone": 24, "puck": 32}  # about 4x the physical state, so anti-collapse need not invent features
 REPAIR_VARIANTS = {"idm": {"idm_weight": 1.0}, "state": {"state_weight": 1.0}}  # registered in docs/HYPOTHESES.md, Thread P
+ACTION_REPEATS = (1, 3)  # simulator steps per action. 60 divides by 3, so the training data keeps its transitions exactly
+
+
+def decision_steps(sim_steps: int, repeat: int) -> int:
+    """A count of simulator steps as a count of decisions, rounded up, so physical time is not cut short."""
+    return math.ceil(sim_steps / repeat)
 
 
 @dataclass(frozen=True)
@@ -131,6 +138,7 @@ class ThreadPConfig:
     error_fed: ErrorFedSettings = field(default_factory=ErrorFedSettings)
     threads: int = 2
     repair_variant: str | None = None  # set only by with_repair_variant: the pilot stage alone, at rung 0, on the pilot seed
+    action_repeat: int = 1  # set only by with_action_repeat. Above 1 the error-fed core cannot train (see docs/HYPOTHESES.md), so only a repair run takes it
 
     def fingerprint_view(self) -> dict:
         """Everything that changes a job's numbers. Seed and family lists do not, so a run can be extended."""
@@ -195,13 +203,28 @@ def with_repair_variant(cfg: ThreadPConfig, variant: str) -> ThreadPConfig:
     return cfg
 
 
-def config_for(mode: str, repair_variant: str | None = None) -> ThreadPConfig:
+def with_action_repeat(cfg: ThreadPConfig, repeat: int) -> ThreadPConfig:
+    """Training data keeps its physical time per trajectory and its total transitions. Holdout and adaptation keep their transitions.
+
+    Holdout steps stay as they are because make_windows needs start 30 + horizon 30. The closed loop is scaled by cem_for and episode_steps
+    in the worker, and the success window by sim.env_on, because those numbers belong to each family's environment.
+    """
+    if repeat not in ACTION_REPEATS:
+        raise ValueError(f"action repeat {repeat} is not one of {ACTION_REPEATS}")
+    cfg.action_repeat = repeat
+    cfg.train_steps = decision_steps(cfg.train_steps, repeat)
+    cfg.train_traj = cfg.train_traj * repeat
+    return cfg
+
+
+def config_for(mode: str, repair_variant: str | None = None, action_repeat: int = 1) -> ThreadPConfig:
     if mode == "full":
         cfg = full_config()
     elif mode == "smoke":
         cfg = smoke_config()
     else:
         raise ValueError(f"unknown mode {mode!r}")
+    cfg = with_action_repeat(cfg, action_repeat)
     return cfg if repair_variant is None else with_repair_variant(cfg, repair_variant)
 
 

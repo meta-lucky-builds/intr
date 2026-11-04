@@ -11,7 +11,7 @@ A summary and a tar are written after every stage. The folder name includes a fi
 code resumes, and changed code starts a new folder instead of mixing results.
 
 --repair-variant idm|state runs the pilot stage alone, at rung 0, on the pilot seed, with that encoder objective, and then stops. No registered
-seed starts, in the tiny preflight job either.
+seed starts, in the tiny preflight job either. --action-repeat 3 holds each action for 3 simulator steps, and is refused without a repair variant.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .config import EMBED_DIMS, REPAIR_VARIANTS, ThreadPConfig, config_for, estimate_job_seconds
+from .config import ACTION_REPEATS, EMBED_DIMS, REPAIR_VARIANTS, ThreadPConfig, config_for, estimate_job_seconds
 from .publish import TOKEN_VAR, make_tar, publish_results, redact, scrub_origin
 from .scheduler import Job, RunReport, Slot, atomic_write_json, choose_concurrency, discover_gpus, is_complete, plan_slots, run_jobs, worker_env
 
@@ -67,7 +67,7 @@ def worker(mode: str, kind: str, *extra: str) -> list[str]:
 
 
 def variant_args(cfg: ThreadPConfig) -> list[str]:
-    return ["--repair-variant", cfg.repair_variant] if cfg.repair_variant else []
+    return ["--repair-variant", cfg.repair_variant, "--action-repeat", str(cfg.action_repeat)] if cfg.repair_variant else []
 
 
 def job_for(paths: Paths, mode: str, kind: str, family: str, seed: int, fingerprint: str, rung: int = 0) -> Job:
@@ -134,7 +134,7 @@ def preflight_each_gpu(paths: Paths, mode: str, cfg: ThreadPConfig, slots_one_ea
     root = paths.run / "preflight"
     families = ["--families", *cfg.families]
     checks = [
-        Job(f"preflight_{i}", worker(mode, "preflight", *families, "--out", str(root / f"checks_{i}.json"), "--fingerprint", fingerprint), root / f"checks_{i}.json", paths.logs / f"preflight_{i}.log", fingerprint)
+        Job(f"preflight_{i}", worker(mode, "preflight", *families, *variant_args(cfg), "--out", str(root / f"checks_{i}.json"), "--fingerprint", fingerprint), root / f"checks_{i}.json", paths.logs / f"preflight_{i}.log", fingerprint)
         for i in range(len(slots_one_each))
     ]
     report = run_jobs(checks, slots_one_each, "preflight", max_attempts=1, progress=say)
@@ -309,12 +309,15 @@ def main(argv=None) -> int:
     parser.add_argument("--jobs-per-gpu", type=int, default=None, help="skip the measurement")
     parser.add_argument("--no-publish", action="store_true")
     parser.add_argument("--repair-variant", default=None, choices=sorted(REPAIR_VARIANTS), help="pilot stage only, rung 0, pilot seed, with this encoder objective")
+    parser.add_argument("--action-repeat", type=int, default=1, choices=ACTION_REPEATS, help="simulator steps per action, with --repair-variant only")
     args = parser.parse_args(argv)
     if args.repair_variant and args.seeds:
         parser.error("--repair-variant runs the pilot seed only, so it takes no --seeds")
+    if args.action_repeat != 1 and not args.repair_variant:
+        parser.error("--action-repeat above 1 runs only with --repair-variant: at that repeat the later stages have not been scaled")
 
     mode = "smoke" if args.smoke else "full"
-    cfg = config_for(mode, args.repair_variant)
+    cfg = config_for(mode, args.repair_variant, args.action_repeat)
     if args.families:
         cfg.families = args.families
     if args.seeds:

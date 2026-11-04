@@ -331,6 +331,62 @@ Drone frames were offscreen (position clamped in the image) 30% of the time. Lar
 - **Registered seeds so far:** the CPU pilot workflow ran into main-stage jobs for pendulum seeds 10-12 by design. Those records were not
   read and are not scored. Only a timing and validation-selection log line for seed 10 was seen, and the GPU run re-trains anyway.
 
+**Encoder repair, round-one results, 2026-11-04 (run 41811136896, seed 1010, 32 px, validation only).**
+
+| Family | Variant | Frozen | Oracle | Latent reduction | Gate |
+|---|---|---|---|---|---|
+| pendulum | `idm` | 0.825 | 0.925 | 38.6% | pass |
+| pendulum | `state` | 0.70 | 0.925 | 39.8% | pass |
+| drone | `idm` | 0.5 | 1.0 | 6.6% | fail |
+| drone | `state` | 0.9 | 1.0 | 7.2% | fail |
+| puck | `idm` | 0.075 | 1.0 | 0.6% | fail |
+| puck | `state` | 0.275 | 1.0 | 1.8% | fail |
+
+Probe R2: puck `idm` agent position 0.99, agent velocity 0.90, puck velocity 0.79 (baseline 0.64, 0.28, 0.73). Drone `idm` velocities 0.52, 0.53,
+0.49, no change. Drone `state` velocities 0.58, 0.58, omega 0.79, with frames offscreen 30% of the time.
+
+- **Verdict on the registered prediction:** the R2 half held on puck and failed on drone. The reduction half failed on both.
+- **Decision rule:** neither variant meets it. Pendulum passes under both, and no second family passes under either.
+- **Findings from reading `envs.py` and `render.py` with hand calculation, reported before these results and written here after they were seen:**
+  1. Drone velocity is partly limited by the renderer. Drawn position clamps at +-2.8, and while it is clamped, velocity along that axis does not
+     show in the image, whatever the objective.
+  2. Drone actions barely show in the image at 32 px, where a pixel is 0.219 m. One step of full collective thrust changes the position second
+     difference by about 0.36 px, and one unit of rotor difference moves the rotor tip about 0.14 px. So the `idm` signal is weak.
+  3. Puck's hidden parameters act only on the puck, while `idm` mainly sharpens the agent, whose mass is fixed at 1. `idm` can help the reduction only
+     indirectly, through less irreducible error and better contact prediction.
+  4. Two frames cannot fully fix agent velocity. With `c_agent` = 4 and a 0.1 s step, displacement mixes the start velocity with the action, which
+     puts an estimated R2 ceiling of about 0.86 on agent velocity under iid actions.
+
+**Action repeat and the noise floor, registered 2026-11-04, before any round-two result (post hoc: formed after round one).**
+
+- **Observation:** Thread G's state-based latent gain at dt 0.1 s was drone 0.957 and puck 0.42. From pixels it is under 8% and under 2%, even with a
+  state-supervised encoder whose position R2 is 0.99.
+- **Explanation, a hypothesis:** the core's loss is in units of delta std, and over one 0.1 s step the delta is about the same size as the encoder's own
+  error, so hidden physics sits below an encoder noise floor. Hidden-physics displacement grows with the square of the time step while that floor
+  does not, so a longer step should lift the signal.
+- **Noise-floor ratio:** a probe-shaped MLP from true observable obs to embedding, fit on training trajectories with every fourth one held out. `ratio` is the
+  mean over embedding dimensions of (held-out MSE of that fit / variance of the one-step embedding delta). Every pilot record also holds `ratio_pooled`, the
+  per-dimension values, delta variance and embedding variance.
+- **Predictions, with a repeat of 3 at unchanged thresholds:** reduction rises on drone and puck against repeat 1 with the same objective, and the ratio falls.
+- **Falsifier:** if the ratio at repeat 1 is small (under 0.1) on drone and puck, the explanation is wrong, whatever the gate does.
+- **Arms:** (`idm`, repeat 1), (`idm`, repeat 3), (`state`, repeat 3), on pendulum, drone and puck. Seed 1010 only, validation only, rung 0 only.
+- **Stopping rule:** this is the last repair round. Adopt a setting only if pendulum passes and at least one more family passes, preferring `idm` over
+  `state`, and label `state` as state-supervised. Otherwise the GPU run is pendulum only at the default objective and repeat 1, and drone and puck are
+  reported as ungated. One setting for all families.
+- **Scaling at repeat 3, fixed before any result:**
+  - The same action is held for 3 simulator steps at the simulator level, so burn-in, data, the oracle's model and the closed loop all use it. Physics,
+    `dt` and hidden parameters do not change.
+  - Training: 20 steps and 48 trajectories, so the same 6 s per trajectory and the same 960 transitions per environment.
+  - Holdout and adaptation keep their counts, 60 and 40 steps, so they cover 18 s and 12 s of physical time. Holdout cannot shrink, since its windows need
+    start 30 + horizon 30.
+  - Closed loop, in decisions: pendulum and drone 20 steps with horizon 4; puck 17 steps (5.1 s against 5.0 s) with horizon 4 (1.2 s against 1.0 s).
+  - Success window: 10 observations become 4, both spanning 0.9 s. Puck tests only the final step.
+- **Left unscaled at repeat 3, so read with care:** open-loop horizons count decisions, so horizon 10 is 3 s. The JEPA rollout of 3 is 0.9 s. Noise
+  correlation in the `smooth` policy and in CEM is per decision. The drone's `level` policy gains and the planner reasoning in `DroneEnv`'s docstring assumed a
+  0.1 s control step, and burn-in holds zero action for 0.3 s. The observation scale stays the one sampled at 0.1 s, so decoded units do not change.
+- **H14p does not fit at repeat 3:** its core trains on phases up to 50 + 30 steps, and trajectories of 20 steps refuse phases longer than that, while its test
+  filter takes 40 steps. So repeat 3 runs only on the repair path, and adopting it would first need a decision on H14p.
+
 ### Parked
 
 - **H3's collinearity clause:** needs a real manipulation, such as controlling N against F with a check that the measures move.

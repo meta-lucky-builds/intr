@@ -19,14 +19,31 @@ import torch
 from torch import Tensor
 
 from ..envs import OBS_DT, BatchEnv
+from .config import decision_steps
 
 
-def env_on(env: BatchEnv, device) -> BatchEnv:
-    """Shallow copy with hidden parameters and bounds on device. Sample with the original, step with this."""
+def env_on(env: BatchEnv, device, repeat: int = 1) -> BatchEnv:
+    """Shallow copy with hidden parameters and bounds on device. Sample with the original, step with this.
+
+    repeat holds each action for that many simulator steps. Burn-in, data, the oracle's model and the closed loop all call this step, so
+    they all see it, and one stored step is then one decision. dt and physics are untouched. The success window is the one number in an
+    environment that counts observations, so it is converted: 10 observations 0.1 s apart and 4 observations 0.3 s apart both span 0.9 s.
+    """
     moved = copy.copy(env)
     moved.params = {k: v.to(device) for k, v in env.params.items()}
     moved.obs_low = env.obs_low.to(device)
     moved.obs_high = env.obs_high.to(device)
+    if repeat != 1:
+        one_step = moved.step
+
+        def held_step(state: Tensor, action: Tensor) -> Tensor:
+            for _ in range(repeat):
+                state = one_step(state, action)
+            return state
+
+        moved.step = held_step
+        if hasattr(moved, "success_window"):
+            moved.success_window = decision_steps(moved.success_window, repeat)
     return moved
 
 

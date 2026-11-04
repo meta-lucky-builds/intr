@@ -328,6 +328,45 @@ def probe_r2(probe: StateProbe, emb: Tensor, obs: Tensor) -> dict:
     return {"per_dim": r2.tolist(), "mean": r2.mean().item()}
 
 
+def noise_floor(observed: Observed, hidden: int, steps: int, batch: int, seed, device, heldout_every: int = 4) -> dict:
+    """How much of an embedding the true observation does not explain, in units of the one-step embedding delta. Diagnostic only.
+
+    A probe-shaped MLP from obs to embedding, fit on training trajectories, with every heldout_every-th one held out, so all data policies
+    are on both sides. ratio is the mean over dimensions of heldout MSE / delta variance, the same units as the core's loss, which is why
+    it can be read beside exact_train_loss. ratio_pooled weights dimensions by delta variance.
+
+    It reads no encoder and writes to nothing it is given. The global random state is put back.
+    """
+    with torch.random.fork_rng(devices=[]):
+        emb, obs = observed.emb.detach(), observed.obs
+        B, D, O = emb.shape[1], emb.shape[-1], obs.shape[-1]
+        held = torch.arange(B) % heldout_every == heldout_every - 1
+        if not held.any():
+            held[-1] = True
+        x_fit, y_fit = obs[:, ~held].reshape(-1, O), emb[:, ~held].reshape(-1, D)
+        x_held, y_held = obs[:, held].reshape(-1, O), emb[:, held].reshape(-1, D)
+        fit, stats = fit_probe(x_fit, y_fit, "train", y_fit.std(0).clamp_min(1e-6), hidden, steps, batch, seed, device)
+        with torch.no_grad():
+            mse = ((fit(x_held.to(fit.obs_mean.device)).cpu() - y_held) ** 2).mean(0)
+    delta_var = (emb[:, :, 1:] - emb[:, :, :-1]).reshape(-1, D).var(0).clamp_min(1e-12)
+    emb_var = emb.reshape(-1, D).var(0)
+    ratio = mse / delta_var
+    return {
+        "ratio": ratio.mean().item(),
+        "ratio_pooled": (mse.sum() / delta_var.sum()).item(),
+        "ratio_per_dim": ratio.tolist(),
+        "heldout_mse": mse.mean().item(),
+        "heldout_mse_per_dim": mse.tolist(),
+        "delta_variance": delta_var.mean().item(),
+        "delta_variance_per_dim": delta_var.tolist(),
+        "embedding_variance": emb_var.mean().item(),
+        "embedding_variance_per_dim": emb_var.tolist(),
+        "n_fit": x_fit.shape[0],
+        "n_heldout": x_held.shape[0],
+        "fit_final_loss": stats["final_loss"],
+    }
+
+
 def transition_data(observed: Observed) -> TransitionData:
     trans = observed.trajectories().flat()
     B, T = observed.act.shape[1], observed.act.shape[2]

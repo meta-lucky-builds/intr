@@ -3,7 +3,7 @@
 #   bash scripts/gpu_run.sh            full run, detached from the terminal
 #   bash scripts/gpu_run.sh --smoke    tiny run in the foreground, minutes on a CPU
 #   bash scripts/gpu_run.sh --status   show progress
-#   bash scripts/gpu_run.sh --repair-variant idm|state   pilot stage only: rung 0, pilot seed, this encoder objective
+#   bash scripts/gpu_run.sh --repair-variant idm|state [--action-repeat 3]   pilot stage only: rung 0, pilot seed, this encoder objective
 # Never add set -x here: this script's environment may hold a token.
 set -u
 
