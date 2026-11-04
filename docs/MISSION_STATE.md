@@ -68,9 +68,11 @@ implement rigorously, test in the cloud, and commit to `meta-lucky-builds/intr` 
 
 ## Next steps
 
-0. On each heartbeat: check `/content/next/pytest_next.log`. When pytest ends, send failures to an Opus agent to fix, then
-   run `thread_b.py --smoke --threads 1` and `thread_c.py --smoke --threads 1` at nice 5, in sequence. If the Thread A
-   process has stopped, go to step 1, adding a way to resume the remaining seeds if fewer than 5 finished.
+0. Threads B and C: 100 of 100 tests pass on Colab and both smokes finish cleanly. Run them in full after Thread A finishes.
+   `--resume-from` was added to `thread_a.py`. Its test is running in `/content/next` (`resume_status.log`, results in
+   `r1/thread_a_smoke.json`). Pass condition: the resumed 2-seed smoke's `jobs` match the uninterrupted
+   `/content/intr/results/thread_a/thread_a_smoke.json` up to wall-clock fields. Do not use resume until it passes.
+   If the Thread A process has stopped, go to step 1, adding a way to resume the remaining seeds if fewer than 5 finished.
 1. When the full run ends, copy the summary into `results/`, write up verdicts per the protocol, and commit.
 2. Start Thread C in parallel, then Thread B if H4 survives, then Threads D and E. H4 needs its own analysis:
    the full run does not report calibration.
