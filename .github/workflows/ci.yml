@@ -1,16 +1,11 @@
-# Cloud CPU check of the pixel experiment: tests, then the same script the GPU run uses, in smoke mode. Commits nothing.
-name: pixel-check
+# All tests on cloud CPU, then the pixel experiment's own script in smoke mode. Commits nothing.
+name: ci
 
 on:
   push:
     branches:
-      - mission/world-model-techniques
-    paths:
-      - src/intr/pixel/**
-      - experiments/thread_p.py
-      - scripts/gpu_run.sh
-      - tests/test_pixel_*.py
-      - .github/workflows/pixel-check.yml
+      - main
+  pull_request:
 
 permissions:
   contents: read
@@ -18,7 +13,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
         with:
@@ -29,7 +24,7 @@ jobs:
       - name: Install dependencies
         run: python -m pip install "torch==2.11.0" --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple numpy pytest
       - name: Tests
-        run: python -m pytest -q --tb=short tests/test_pixel_*.py
+        run: python -m pytest -q --tb=short
       - name: Smoke one family through the GPU script
         run: bash scripts/gpu_run.sh --smoke --families pendulum
       - name: Smoke through the GPU script

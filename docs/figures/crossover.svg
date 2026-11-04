@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 340" role="img" aria-labelledby="t d" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+  <title id="t">Latent versus RLS error on pendulum, from state and from pixels</title>
+  <desc id="d">From state, the latent wins on familiar physics (0.044 vs 0.124) and RLS wins on unfamiliar physics (0.348 vs 0.718). From pixels, the latent wins both (0.251 vs 0.401 and 0.718 vs 0.817).</desc>
+  <rect width="760" height="340" fill="#ffffff"/>
+  <g font-size="15" font-weight="600" fill="#1f2328" text-anchor="middle">
+    <text x="205" y="28">From state: the methods cross over</text>
+    <text x="570" y="28">From pixels: the latent wins both</text>
+  </g>
+  <g font-size="12" fill="#57606a" text-anchor="middle">
+    <text x="205" y="46">5 seeds, one trajectory (K = 1)</text>
+    <text x="570" y="46">10 seeds, one trajectory (K = 1)</text>
+  </g>
+  <g stroke="#d0d7de" stroke-width="1">
+    <line x1="50" y1="270" x2="360" y2="270"/><line x1="50" y1="170" x2="360" y2="170" stroke-dasharray="3 3"/><line x1="50" y1="70" x2="360" y2="70" stroke-dasharray="3 3"/>
+    <line x1="415" y1="270" x2="725" y2="270"/><line x1="415" y1="170" x2="725" y2="170" stroke-dasharray="3 3"/><line x1="415" y1="70" x2="725" y2="70" stroke-dasharray="3 3"/>
+  </g>
+  <g font-size="11" fill="#57606a" text-anchor="end">
+    <text x="44" y="274">0</text><text x="44" y="174">0.5</text><text x="44" y="74">1.0</text>
+    <text x="409" y="274">0</text><text x="409" y="174">0.5</text><text x="409" y="74">1.0</text>
+  </g>
+  <g fill="#0969da">
+    <rect x="80" y="261.2" width="48" height="8.8"/><rect x="225" y="126.4" width="48" height="143.6"/>
+    <rect x="445" y="219.8" width="48" height="50.2"/><rect x="590" y="126.4" width="48" height="143.6"/>
+  </g>
+  <g fill="#bc4c00">
+    <rect x="132" y="245.2" width="48" height="24.8"/><rect x="277" y="200.4" width="48" height="69.6"/>
+    <rect x="497" y="189.8" width="48" height="80.2"/><rect x="642" y="106.6" width="48" height="163.4"/>
+  </g>
+  <g font-size="12" fill="#1f2328" text-anchor="middle">
+    <text x="104" y="256">0.044</text><text x="156" y="240">0.124</text><text x="249" y="121">0.718</text><text x="301" y="195">0.348</text>
+    <text x="469" y="214">0.251</text><text x="521" y="184">0.401</text><text x="614" y="121">0.718</text><text x="666" y="101">0.817</text>
+  </g>
+  <g font-size="13" fill="#1f2328" text-anchor="middle">
+    <text x="130" y="290">Familiar physics</text><text x="275" y="290">Unfamiliar physics</text>
+    <text x="495" y="290">Familiar physics</text><text x="640" y="290">Unfamiliar physics</text>
+  </g>
+  <rect x="275" y="312" width="12" height="12" fill="#0969da"/><text x="292" y="322" font-size="13" fill="#1f2328">Latent</text>
+  <rect x="355" y="312" width="12" height="12" fill="#bc4c00"/><text x="372" y="322" font-size="13" fill="#1f2328">RLS write</text>
+  <text x="725" y="322" font-size="11" fill="#57606a" text-anchor="end">Lower is better. Compare within a panel.</text>
+</svg>

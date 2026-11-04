@@ -1,15 +1,10 @@
 # The registered Thread P run for pendulum, at real settings, on free cloud CPU runners, because no GPU is available. Commits nothing.
-# A push changing this file starts the full run. Dispatch mode smoke checks the path with numbers that mean nothing.
+# Start it from the Actions tab. Mode smoke checks the path with numbers that mean nothing.
 # Each job runs one runner job through scripts/pixel_actions.py, which takes the job list from the runner itself.
 # "Re-run failed jobs" repeats no finished work: a job finds its own artifact from the earlier attempt and stops.
 name: pixel-pendulum
 
 on:
-  push:
-    branches:
-      - mission/world-model-techniques
-    paths:
-      - .github/workflows/pixel-pendulum.yml
   workflow_dispatch:
     inputs:
       mode:
@@ -17,10 +12,6 @@ on:
         type: choice
         options: [full, smoke]
         default: full
-      smoke_fail_seed:
-        description: smoke only, this seed's main job fails on the first attempt, to check partial summaries and re-runs
-        type: string
-        default: ""
 
 permissions:
   contents: read
@@ -104,9 +95,6 @@ jobs:
       - name: Install dependencies
         if: steps.status.outputs.done == 'false'
         run: ${{ env.INSTALL }}
-      - name: Fail on purpose, smoke only
-        if: steps.status.outputs.done == 'false' && inputs.mode == 'smoke' && inputs.smoke_fail_seed == format('{0}', matrix.job.seed) && github.run_attempt == '1'
-        run: exit 1
       - id: run
         name: Run the job
         if: steps.status.outputs.done == 'false'
@@ -193,22 +181,6 @@ jobs:
           overwrite: true
           if-no-files-found: warn
           retention-days: 30
-
-  h14-timing:
-    name: h14 timing at full settings
-    if: inputs.mode == 'smoke'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@v7
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-      - name: Install dependencies
-        run: ${{ env.INSTALL }}
-      - run: python scripts/pixel_actions.py time-h14 --family "$FAMILY" --updates 100
 
   summarize:
     name: summarize

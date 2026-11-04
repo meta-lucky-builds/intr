@@ -1,23 +1,15 @@
 # Runs one thread's experiments, one seed-and-family job at a time, and commits the merged results to this branch.
 #
-# To start a run, push a change to .ci/run-request.json on this branch, for example
+# To start a run, set .ci/run-request.json on main, for example
 #     {"thread": "a", "seeds": [0], "families": ["pendulum", "puck"], "note": "pilot"}
-# Pushing the same content again does not start a run. Pull before pushing a request, since a run may have committed.
+# then start this workflow from the Actions tab. Pull before changing the request, since a run may have committed.
 #
-# This cannot loop. Pushes by GITHUB_TOKEN start no workflows, and independently of that, the merge job checks that its
-# commit changes only the one results file, which the paths filter below does not match.
-#
-# The setup job runs only on the mission branch, and the merge job pushes only to it, so main is never touched,
-# whatever a future workflow_dispatch asks for.
+# This cannot loop: it starts only by hand, and the merge job checks that its commit changes only the one results file.
+# The setup job runs only on main, and the merge job pushes only to main.
 
 name: experiments
 
 on:
-  push:
-    branches:
-      - mission/world-model-techniques
-    paths:
-      - .ci/run-request.json
   workflow_dispatch:
 
 permissions:
@@ -33,7 +25,7 @@ env:
 
 jobs:
   setup:
-    if: github.ref == 'refs/heads/mission/world-model-techniques'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -183,7 +175,7 @@ jobs:
       - name: Merge and commit
         run: |
           target="results/thread_${THREAD}/thread_${THREAD}_full.json"
-          if [ "$GITHUB_REF" != "refs/heads/${BRANCH}" ] || [ "$BRANCH" != "mission/world-model-techniques" ]; then
+          if [ "$GITHUB_REF" != "refs/heads/${BRANCH}" ] || [ "$BRANCH" != "main" ]; then
             echo "::error::refusing to publish to ${BRANCH} from ${GITHUB_REF}"
             exit 1
           fi

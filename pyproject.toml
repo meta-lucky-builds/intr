@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "intr"
 version = "0.1.0"
-description = "Test-time adaptation of small dynamics models: shared benchmark and experiments"
+description = "Pre-registered tests of test-time adaptation for small world models, from state and from pixels"
 requires-python = ">=3.11"
 dependencies = ["torch", "numpy"]
 

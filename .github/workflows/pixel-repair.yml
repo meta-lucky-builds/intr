@@ -1,27 +1,38 @@
-# Free real-settings test of the encoder repair on cloud CPU: rung 0 of the pilot on seed 1010, one job per family and variant.
-# The runner exits after that, so no registered seed starts. Registered in docs/HYPOTHESES.md, Thread P. Commits nothing.
+# Encoder repair test on cloud CPU, registered in docs/HYPOTHESES.md, Thread P: rung 0 of the pilot on seed 1010, one job per family.
+# The runner exits after that, so no registered seed starts. Mode smoke checks the path with numbers that mean nothing. Commits nothing.
 name: pixel-repair
 
 on:
-  push:
-    branches:
-      - mission/world-model-techniques
-    paths:
-      - .github/workflows/pixel-repair.yml
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: encoder objective
+        type: choice
+        options: [idm, state]
+        default: idm
+      repeat:
+        description: simulator steps per action
+        type: choice
+        options: ["1", "3"]
+        default: "1"
+      mode:
+        description: full is the registered setting; smoke checks the path
+        type: choice
+        options: [full, smoke]
+        default: full
 
 permissions:
   contents: read
 
 jobs:
   repair:
-    name: repair ${{ matrix.family }} ${{ matrix.variant }}
+    name: repair ${{ matrix.family }}
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     strategy:
       fail-fast: false
       matrix:
         family: [pendulum, drone, puck]
-        variant: [idm, state]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -35,12 +46,12 @@ jobs:
         timeout-minutes: 330
         env:
           INTR_P_DETACHED: "1"
-        run: bash scripts/gpu_run.sh --allow-cpu --skip-tests --no-publish --families ${{ matrix.family }} --repair-variant ${{ matrix.variant }}
+        run: bash scripts/gpu_run.sh --allow-cpu --skip-tests --no-publish --families ${{ matrix.family }} --repair-variant ${{ inputs.variant }} --action-repeat ${{ inputs.repeat }} ${{ inputs.mode == 'smoke' && '--smoke' || '' }}
       - name: Upload pilot records
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: pilot-${{ matrix.family }}-${{ matrix.variant }}
+          name: pilot-${{ matrix.family }}-${{ inputs.variant }}-repeat${{ inputs.repeat }}
           path: |
             results/thread_p_gpu/**/*.txt
             results/thread_p_gpu/**/*.json

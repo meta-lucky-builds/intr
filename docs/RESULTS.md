@@ -1,4 +1,15 @@
-# Results: H1, H2, H3, H4, H7, H8, H9, H10
+# Results
+
+Contents:
+
+- **Round one, from state:** H1, H2, H3, H4, H7, H8, H9, H10. This is everything from here to "What this implies".
+- [Decisions after round one](#decisions-after-round-one)
+- [Benchmark repair: Gate G1](#benchmark-repair-gate-g1)
+- [Pixel gate and encoder repair](#pixel-gate-and-encoder-repair)
+- [Thread P: pendulum on pixels](#thread-p-pendulum-on-pixels-run-41841227508-seeds-10-19)
+- [Descriptive pixel results: H16 and H17](#descriptive-pixel-results-h16-and-h17)
+
+## Round one
 
 Scored against `docs/HYPOTHESES.md` from `results/thread_{a,b,c}/thread_{a,b,c}_full.json`: 5 seeds, 2 families.
 
@@ -470,7 +481,7 @@ Code that computed the metrics held up: no scoring bug changes a verdict. These 
 11. **H4's reference rule has no force at large `lambda`.** With `q` about 0.06, half the reference is 0.03. And the `val_calibration` route "supports" H4 on a model 8x worse than frozen (`thread_b.py:366-370`).
 12. **One trajectory draw is a large unmodeled noise source.** `thread_a.py:279` draws 3 trajectories and cuts to K, while `:179` draws 1, so the same RLS on the same environments gets different data. Pendulum interp is 0.124 in one and 0.150 in the other, with per-seed changes up to 2x (0.072 to 0.145). So H1 and H3 numbers are not interchangeable.
 13. **Coverage gaps against the protocol.** H7 grid is interp only, with 84 rollouts per seed (`thread_c.py:150-151`). Closed-loop in Thread C is interp and a subset of arms, with no carry across real steps. H3, H4, and H10 have no closed-loop, as registered for H4 and H10. H3 is the unregistered gap.
-14. **Minor.** Python 3.13.17 and 3.13.18 are mixed across jobs. Thread C pendulum selection scores differ across jobs with the same choices, so that step is not bit-reproducible. `thread_a.py:19` still says `HYPOTHESES.md` names no primary horizon. Pendulum oracle gates here (extrap 0.24 to 0.43) differ from the figures in `MISSION_STATE.md` (0.38 to 0.48).
+14. **Minor.** Python 3.13.17 and 3.13.18 are mixed across jobs. Thread C pendulum selection scores differ across jobs with the same choices, so that step is not bit-reproducible. `thread_a.py:19` still says `HYPOTHESES.md` names no primary horizon. Pendulum oracle gates here (extrap 0.24 to 0.43) differ from an earlier Colab check (0.38 to 0.48).
 
 Checks that passed: source hashes, bootstrap reproduction, RLS order invariance, `check_ablations` (no forward no-op), zero skipped training updates in looped arms, zero numerical failures in H10, no selection on test tiers found in the code read.
 
@@ -500,7 +511,40 @@ Checks that passed: source hashes, bootstrap reproduction, RLS order invariance,
 3. Register a real collinearity manipulation for H3, for example controlling N against F, with a check that the measures move, or retire that clause.
 4. H5 and H6 can proceed on pendulum only, on ranking, with the coverage caveat above.
 
-Changes to any threshold or prediction need their own commit per `MISSION_STATE.md`.
+Changes to any threshold or prediction need their own commit.
+
+## Decisions after round one
+
+| Line of work | Decision | Reason |
+|---|---|---|
+| H1 crossover | Replicate | Clear on pendulum only; puck could not test it |
+| H2 hybrid | Refine as H12 | Failed through one validation-chosen `lambda` across regimes |
+| H3 RLS vs gradient | Park | Tuned gradient matches in-family; collinearity half untested |
+| H4 calibration | Continue | Ranking works on pendulum, magnitudes do not under shift |
+| H5, H6 | Continue, restated | Coverage is the lever; pendulum and second family only |
+| H7 | Park | Loops never trained deep; depends on H14 |
+| H8 | Drop as registered | No effect at trained depth |
+| H9 | Drop as registered; retest inside H14 | The loop never saw its error |
+| H10 forgetting | Refine as H13 | Reset wins; plain forgetting loses its prior |
+| Puck | Repair, gate G1 | Model underfits contact; nulls are uninformative |
+| Stored `outcome` fields | Left as stored | This file scores from the rule text; no verdict changes |
+
+Later, work moved to pixels. The state-based runs of H12, H13, H5 and H14 were stopped before running, so their code in `experiments/thread_f.py` has tests but no full results.
+H6, H11 and Thread D were never run.
+
+## Benchmark repair: Gate G1
+
+From `results/thread_g/thread_g_full.json`, seeds 5-9. Puck passes with more model capacity and updates (`capacity_updates`: closed-loop success 0.84, latent gain 0.42).
+The new drone family passes with the original settings (`round_one`: success 0.995, latent gain 0.957). These gates make the two families usable from state. No H1-style verdict was run on them from state.
+
+## Pixel gate and encoder repair
+
+Full tables and the registrations written before each result are in the Thread P section of `docs/HYPOTHESES.md`. All of this used pilot seed 1010, on validation data, and is not evidence for or against any method.
+
+- **First pilot (run 41789738053):** pendulum passed Gate GP. Drone failed on the latent's 10% loss reduction (5.3%). Puck failed on control and reduction (0.2%). Moving from 32 to 48 px did not help.
+- **Round one of repair (run 41811136896):** an inverse-dynamics term raised puck agent velocity R2 from 0.28 to 0.90, but neither it nor a state-supervised encoder passed a second family.
+- **Round two (run 41827985599), the registered last round:** holding each action for 3 steps lifted drone's reduction to 12-13%, but broke closed-loop control on all three families. No setting passed, so drone and puck get no verdict.
+- **Possible cause, not confirmed:** the error of a fit from true state to embedding, divided by the variance of the one-step embedding change, is about 1.1 on drone and puck and 0.03 on pendulum. Hidden physics may be buried in that error. A large ratio does not prove this, since the fit's error is only an upper bound on encoder noise.
 
 ## Thread P: pendulum on pixels (run 41841227508, seeds 10-19)
 
@@ -534,3 +578,11 @@ Caveats that limit these verdicts:
 - **H14p's gain looks like a training difference:** most of the gap to no-error also appears without any belief. All error-fed arms are worse than frozen on interp, with a different core and fewer steps.
 - **H3p's gradient grid** sits at an edge in 7 of 10 seeds, which can only handicap gradient.
 - **Metric saturation** compresses shifted tiers at horizon 10. It does not hide an RLS win: latent leads at horizons 1 and 10 in all seeds.
+- **A coincidence to note:** latent oof error rounds to 0.718 in both the state run (0.71765) and this run (0.71760). These are different seeds, models and error scales, and their per-seed values differ.
+
+## Descriptive pixel results: H16 and H17
+
+Registered as descriptive, with no verdict.
+
+- **H16, appearance shift (10 seeds, horizon 10):** new colours with the same physics raise error from interp to appearance: frozen 0.416 to 0.672, latent 0.251 to 0.630, better RLS 0.401 to 0.694. Against frozen on the same tier, no write clears the effect rule (latent 6.3%, RLS 3.1% worse, hybrid 1.3% worse). The state probe's own floor rises from 0.028 to 0.369, so the encoder itself is shifted. This fits the registered expectation that writes cannot repair it.
+- **H17, latent size (3 seeds, means only):** at latent sizes 2, 8 and 32, `latent_opt` error is 0.273, 0.248, 0.244 on interp and 0.745, 0.705, 0.707 on oof. Going from 8 to 32 changes little, which fits the capacity account, but with three seeds this is weak.
