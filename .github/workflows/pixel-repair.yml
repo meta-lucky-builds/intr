@@ -1,0 +1,49 @@
+# Free real-settings test of the encoder repair on cloud CPU: rung 0 of the pilot on seed 1010, one job per family and variant.
+# The runner exits after that, so no registered seed starts. Registered in docs/HYPOTHESES.md, Thread P. Commits nothing.
+name: pixel-repair
+
+on:
+  push:
+    branches:
+      - mission/world-model-techniques
+    paths:
+      - .github/workflows/pixel-repair.yml
+
+permissions:
+  contents: read
+
+jobs:
+  repair:
+    name: repair ${{ matrix.family }} ${{ matrix.variant }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        family: [pendulum, drone, puck]
+        variant: [idm, state]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: python -m pip install "torch==2.11.0" --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple numpy pytest
+      - name: Pilot at rung 0, then stop
+        timeout-minutes: 330
+        env:
+          INTR_P_DETACHED: "1"
+        run: bash scripts/gpu_run.sh --allow-cpu --skip-tests --no-publish --families ${{ matrix.family }} --repair-variant ${{ matrix.variant }}
+      - name: Upload pilot records
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pilot-${{ matrix.family }}-${{ matrix.variant }}
+          path: |
+            results/thread_p_gpu/**/*.txt
+            results/thread_p_gpu/**/*.json
+            results/thread_p_gpu/**/*.log
+          if-no-files-found: warn
+          retention-days: 14
