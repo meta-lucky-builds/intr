@@ -259,6 +259,33 @@ enough windows for this to matter. Predictions:
   saw prediction error and the residual did not, so this is a fair retest.
 - Kill: no better than the first round's `full` on interp after adaptation, or state stays inert.
 
+### Thread P: pixels on a rented GPU
+
+Do the state-based findings survive when the model must see images? Small models and our own batched renderer, chosen for
+speed and exact control of hidden physics. This is not a published benchmark, and write-ups must say so.
+
+Fixed design:
+- **Families:** pendulum, drone, puck, rendered to small images. Velocity is only visible across frames.
+- **Seeds:** 10-19, unused so far. Ten seeds, because five gave a coarse bootstrap.
+- **Metric comparable across models:** rollout error in physical state, decoded by a probe trained on training environments only.
+  Primary: horizon 10, K = 1. Embedding-space error is not used for verdicts, because its scale differs per model.
+- **Collapse check:** a model whose embedding does not predict state gets no verdict.
+- **Gate GP, per family:** frozen closed-loop success on interp at least 0.5, oracle at least 0.5, and the latent lowering
+  prediction loss by at least 10%. A family failing the gate is not evidence for or against any method.
+- Protocol, effect rule, validation-only selection, and same adaptation data across methods all apply.
+
+Predictions:
+- **H1p:** the crossover holds on each family passing GP: latent wins interp, RLS wins out-of-family.
+  Kill: one method wins both tiers on a passing family.
+- **H12p:** latent-then-evidence-chosen RLS is no worse than the better single method in both tiers.
+  Kill: worse than the better single method in any tier on a passing family.
+- **H4p:** `phi' P phi` ranks one-step error above half its well-specified reference and adds beyond `||phi||^2`.
+  Kill: either fails under interp on a passing family.
+- **H16 appearance shift (exploratory).** Add a tier changing appearance only (colours, background), with physics unchanged.
+  Writes to the dynamics readout cannot repair a shifted encoder, so expect neither the latent nor RLS to recover. Reported as
+  descriptive, with no verdict.
+- **H14p:** runs only if H14 survives on state-based data.
+
 ### Parked
 
 - **H3's collinearity clause:** needs a real manipulation, such as controlling N against F with a check that the measures move.
