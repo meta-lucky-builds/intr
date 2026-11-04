@@ -82,6 +82,12 @@ implement rigorously, test in the cloud, and commit to `meta-lucky-builds/intr` 
    the full run does not report calibration.
 3. Read leads between threads.
 
+## Current run
+
+Thread A pilot, seed 0, Actions run 41760037725. Check with `gh run view 41760037725`. Pull before pushing, because the run
+commits results to this branch. When it ends: read minutes per job from the run summary, and compare with Colab seed 0.
+Persistence errors should match exactly; trained metrics may differ in rounding.
+
 ## Runtime notes
 
 - Colab is CPU only: 2 cores, 12 GB RAM, torch 2.11. Its session depends on the browser tab staying connected.
