@@ -34,6 +34,7 @@ env:
 jobs:
   pilot:
     name: pilot
+    if: github.event_name == 'workflow_dispatch'  # TEMPORARY until smoke passes: a push may not start the full run yet
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     outputs:
@@ -213,7 +214,7 @@ jobs:
   summarize:
     name: summarize
     needs: [pilot, main, extras]
-    if: always()
+    if: always() && github.event_name == 'workflow_dispatch'  # TEMPORARY until smoke passes: back to always()
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
