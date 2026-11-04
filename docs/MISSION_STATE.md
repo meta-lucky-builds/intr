@@ -68,11 +68,15 @@ implement rigorously, test in the cloud, and commit to `meta-lucky-builds/intr` 
 
 ## Next steps
 
-0. Threads B and C: 100 of 100 tests pass on Colab and both smokes finish cleanly. Run them in full after Thread A finishes.
-   `--resume-from` was added to `thread_a.py`. Its test is running in `/content/next` (`resume_status.log`, results in
-   `r1/thread_a_smoke.json`). Pass condition: the resumed 2-seed smoke's `jobs` match the uninterrupted
-   `/content/intr/results/thread_a/thread_a_smoke.json` up to wall-clock fields. Do not use resume until it passes.
-   If the Thread A process has stopped, go to step 1, adding a way to resume the remaining seeds if fewer than 5 finished.
+0. Threads B and C: 100 of 100 tests pass on Colab and both smokes finish cleanly. `--resume-from` passed its test.
+   Full runs are moving to GitHub Actions, which gives exact results committed to the repo with no dependence on a
+   browser tab. Colab stays for small tests and as a cross-check. Pipeline being built: `.github/workflows/experiments.yml`,
+   triggered by pushing `.ci/run-request.json` on this branch.
+   Actions quota is unknown; the free tier may be about 2000 minutes a month. Do not widen the gh login's scopes to check.
+   Pilot on seed 0 first, compare with Colab's seed 0 in `/content/intr/results/thread_a/thread_a_full.json`, and measure
+   minutes. Then run the remaining seeds. Keep the total modest, and check usage between batches. If the Colab Thread A
+   process has stopped, leave it; its seeds 0 and 1 are the cross-check.
+   If Actions is unusable, go to step 1, adding a way to resume the remaining seeds if fewer than 5 finished.
 1. When the full run ends, copy the summary into `results/`, write up verdicts per the protocol, and commit.
 2. Start Thread C in parallel, then Thread B if H4 survives, then Threads D and E. H4 needs its own analysis:
    the full run does not report calibration.

@@ -1,4 +1,10 @@
-results/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Merged results under results/ are tracked. Scratch next to them is not.
+results/**/*.tmp
+results/**/*.log
+results/**/*_smoke.json
+results/**/scratch/
+results/**/job-*/

@@ -540,6 +540,7 @@ def main() -> None:
     mode.add_argument("--smoke", action="store_true", help="tiny settings, checks the pipeline in under 2 minutes")
     mode.add_argument("--full", action="store_true", help="protocol settings, about 1 hour on 2 cores")
     parser.add_argument("--seeds", type=int, default=None, help="override the number of training seeds")
+    parser.add_argument("--seed-list", type=int, nargs="+", default=None, help="exact training seeds to run; overrides --seeds")
     parser.add_argument("--families", nargs="+", default=None, choices=["pendulum", "puck"])
     parser.add_argument("--z-dim", type=int, default=None, help="override latent dimension")
     parser.add_argument("--no-oracle", action="store_true", help="skip the true-simulator planning ceiling")
@@ -552,6 +553,8 @@ def main() -> None:
     cfg = smoke_config() if args.smoke else full_config()
     if args.seeds is not None:
         cfg.seeds = list(range(args.seeds))
+    if args.seed_list is not None:
+        cfg.seeds = args.seed_list
     if args.families:
         cfg.families = args.families
     if args.z_dim is not None:

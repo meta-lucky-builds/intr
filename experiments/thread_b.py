@@ -834,6 +834,7 @@ def main() -> None:
     mode.add_argument("--smoke", action="store_true", help="tiny settings, checks the pipeline")
     mode.add_argument("--full", action="store_true", help="protocol settings")
     parser.add_argument("--seeds", type=int, default=None, help="override the number of training seeds")
+    parser.add_argument("--seed-list", type=int, nargs="+", default=None, help="exact training seeds to run; overrides --seeds")
     parser.add_argument("--families", nargs="+", default=None, choices=["pendulum", "puck"])
     parser.add_argument("--max-minutes", type=float, default=None, help="start no new job after this long")
     parser.add_argument("--threads", type=int, default=2)
@@ -843,6 +844,8 @@ def main() -> None:
     cfg = smoke_b_config() if args.smoke else full_b_config()
     if args.seeds is not None:
         cfg.a.seeds = list(range(args.seeds))
+    if args.seed_list is not None:
+        cfg.a.seeds = args.seed_list
     if args.families:
         cfg.a.families = args.families
 
