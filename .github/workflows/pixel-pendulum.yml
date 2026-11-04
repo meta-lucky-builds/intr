@@ -1,0 +1,256 @@
+# The registered Thread P run for pendulum, at real settings, on free cloud CPU runners, because no GPU is available. Commits nothing.
+# A push changing this file starts the full run. Dispatch mode smoke checks the path with numbers that mean nothing.
+# Each job runs one runner job through scripts/pixel_actions.py, which takes the job list from the runner itself.
+# "Re-run failed jobs" repeats no finished work: a job finds its own artifact from the earlier attempt and stops.
+name: pixel-pendulum
+
+on:
+  push:
+    branches:
+      - mission/world-model-techniques
+    paths:
+      - .github/workflows/pixel-pendulum.yml
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: full is the registered run; smoke checks the path
+        type: choice
+        options: [full, smoke]
+        default: full
+      smoke_fail_seed:
+        description: smoke only, this seed's main job fails on the first attempt, to check partial summaries and re-runs
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  MODE: ${{ inputs.mode || 'full' }}
+  FAMILY: pendulum
+  PYTHON_VERSION: "3.13.17"
+  INSTALL: python -m pip install "torch==2.11.0" "numpy==2.5.4" --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+
+jobs:
+  pilot:
+    name: pilot
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    outputs:
+      fingerprint: ${{ steps.context.outputs.fingerprint }}
+      main: ${{ steps.plan.outputs.main }}
+      extras: ${{ steps.plan.outputs.extras }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - id: context
+        run: python scripts/pixel_actions.py context --mode "$MODE" --family "$FAMILY"
+      - name: Find an earlier attempt
+        uses: actions/download-artifact@v8
+        with:
+          pattern: leg-pilot
+          merge-multiple: true
+          path: ${{ steps.context.outputs.run }}
+      - name: Install dependencies
+        run: ${{ env.INSTALL }}
+      - name: Preflight and pilot ladder
+        timeout-minutes: 335
+        run: python scripts/pixel_actions.py pilot --mode "$MODE" --family "$FAMILY"
+      - id: plan
+        run: python scripts/pixel_actions.py plan --mode "$MODE" --family "$FAMILY"
+      - name: Upload the run folder
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: leg-pilot
+          path: ${{ steps.context.outputs.run }}/
+          overwrite: true
+          if-no-files-found: warn
+          retention-days: 30
+
+  main:
+    name: ${{ matrix.job.name }}
+    needs: pilot
+    if: needs.pilot.outputs.main != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        job: ${{ fromJSON(needs.pilot.outputs.main) }}
+    env:
+      RUN_DIR: results/thread_p_gpu/${{ needs.pilot.outputs.fingerprint }}
+      NAME: ${{ matrix.job.name }}
+      EXPECT: ${{ needs.pilot.outputs.fingerprint }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Download the pilot and any earlier attempt
+        uses: actions/download-artifact@v8
+        with:
+          pattern: "{leg-pilot,leg-${{ matrix.job.name }},ckpt-${{ matrix.job.name }}}"
+          merge-multiple: true
+          path: ${{ env.RUN_DIR }}
+      - id: status
+        run: python scripts/pixel_actions.py status --mode "$MODE" --family "$FAMILY" --name "$NAME" --expect "$EXPECT"
+      - name: Install dependencies
+        if: steps.status.outputs.done == 'false'
+        run: ${{ env.INSTALL }}
+      - name: Fail on purpose, smoke only
+        if: steps.status.outputs.done == 'false' && inputs.mode == 'smoke' && inputs.smoke_fail_seed == format('{0}', matrix.job.seed) && github.run_attempt == '1'
+        run: exit 1
+      - id: run
+        name: Run the job
+        if: steps.status.outputs.done == 'false'
+        timeout-minutes: 335
+        run: python scripts/pixel_actions.py run --mode "$MODE" --family "$FAMILY" --name "$NAME"
+      # Weights first: a record in an artifact then means the weights were uploaded. status checks both anyway.
+      - name: Upload weights and embedded data for later jobs
+        if: steps.run.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ckpt-${{ matrix.job.name }}
+          path: |
+            ${{ env.RUN_DIR }}/checkpoints/${{ env.FAMILY }}_s${{ matrix.job.seed }}.pt
+            ${{ env.RUN_DIR }}/cache/${{ env.FAMILY }}_s${{ matrix.job.seed }}.pt
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload the record and log
+        if: always() && steps.status.outputs.done == 'false'
+        uses: actions/upload-artifact@v7
+        with:
+          name: leg-${{ matrix.job.name }}
+          path: |
+            ${{ env.RUN_DIR }}/jobs/${{ matrix.job.name }}.json
+            ${{ env.RUN_DIR }}/logs/${{ matrix.job.name }}.log
+            ${{ env.RUN_DIR }}/manifests/${{ matrix.job.name }}.json
+          overwrite: true
+          if-no-files-found: warn
+          retention-days: 30
+
+  extras:
+    name: ${{ matrix.job.name }}
+    needs: [pilot, main]
+    if: ${{ !cancelled() && needs.pilot.result == 'success' && needs.pilot.outputs.extras != '[]' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        job: ${{ fromJSON(needs.pilot.outputs.extras) }}
+    env:
+      RUN_DIR: results/thread_p_gpu/${{ needs.pilot.outputs.fingerprint }}
+      NAME: ${{ matrix.job.name }}
+      EXPECT: ${{ needs.pilot.outputs.fingerprint }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Download the pilot, the main record, and any earlier attempt
+        uses: actions/download-artifact@v8
+        with:
+          pattern: "{leg-pilot,leg-${{ matrix.job.main }},leg-${{ matrix.job.name }}}"
+          merge-multiple: true
+          path: ${{ env.RUN_DIR }}
+      - id: status
+        run: python scripts/pixel_actions.py status --mode "$MODE" --family "$FAMILY" --name "$NAME" --expect "$EXPECT"
+      - name: Download weights and embedded data
+        if: steps.status.outputs.done == 'false'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ckpt-${{ matrix.job.main }}
+          merge-multiple: true
+          path: ${{ env.RUN_DIR }}
+      - name: Install dependencies
+        if: steps.status.outputs.done == 'false'
+        run: ${{ env.INSTALL }}
+      - id: run
+        name: Run the job
+        if: steps.status.outputs.done == 'false'
+        timeout-minutes: 335
+        run: python scripts/pixel_actions.py run --mode "$MODE" --family "$FAMILY" --name "$NAME"
+      - name: Upload the record and log
+        if: always() && steps.status.outputs.done == 'false'
+        uses: actions/upload-artifact@v7
+        with:
+          name: leg-${{ matrix.job.name }}
+          path: |
+            ${{ env.RUN_DIR }}/jobs/${{ matrix.job.name }}.json
+            ${{ env.RUN_DIR }}/logs/${{ matrix.job.name }}.log
+            ${{ env.RUN_DIR }}/manifests/${{ matrix.job.name }}.json
+          overwrite: true
+          if-no-files-found: warn
+          retention-days: 30
+
+  h14-timing:
+    name: h14 timing at full settings
+    if: inputs.mode == 'smoke'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install dependencies
+        run: ${{ env.INSTALL }}
+      - run: python scripts/pixel_actions.py time-h14 --family "$FAMILY" --updates 100
+
+  summarize:
+    name: summarize
+    needs: [pilot, main, extras]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - id: context
+        env:
+          EXPECT: ${{ needs.pilot.outputs.fingerprint }}
+        run: python scripts/pixel_actions.py context --mode "$MODE" --family "$FAMILY" --expect "$EXPECT"
+      - name: Download every record
+        uses: actions/download-artifact@v8
+        with:
+          pattern: leg-*
+          merge-multiple: true
+          path: ${{ steps.context.outputs.run }}
+      - name: Install dependencies
+        run: ${{ env.INSTALL }}
+      - name: Merge, summarize, and print summary.txt
+        run: python scripts/pixel_actions.py summarize --mode "$MODE" --family "$FAMILY"
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: thread-p-pendulum-results
+          path: |
+            ${{ steps.context.outputs.run }}/summary.txt
+            ${{ steps.context.outputs.run }}/summary.json
+            ${{ steps.context.outputs.run }}/manifest.json
+            ${{ steps.context.outputs.run }}/state.json
+            ${{ steps.context.outputs.run }}/jobs/
+            ${{ steps.context.outputs.run }}/logs/
+            ${{ steps.context.outputs.run }}/manifests/
+            ${{ steps.context.outputs.run }}/pilot/
+          overwrite: true
+          if-no-files-found: warn
+          retention-days: 90
