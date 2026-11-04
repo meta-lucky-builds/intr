@@ -514,6 +514,26 @@ def source_fingerprint() -> dict:
     return {str(p.relative_to(ROOT)).replace("\\", "/"): hashlib.sha256(p.read_bytes()).hexdigest() for p in files}
 
 
+def resume_output(path: Path, fresh: dict) -> dict:
+    """Load a stopped run and refuse to continue it if anything that affects results has changed.
+
+    thread_a.py itself is not compared, since adding resume support changed it. Library code and config are.
+    """
+    prior = json.loads(path.read_text())
+    old_cfg, new_cfg = dict(prior["config"]), dict(_jsonable(fresh["config"]))
+    old_cfg.pop("seeds"), new_cfg.pop("seeds")  # extending the seed list is what resuming is for
+    if json.dumps(old_cfg, sort_keys=True) != json.dumps(new_cfg, sort_keys=True):
+        raise ValueError(f"config differs from {path}")
+    prior["config"]["seeds"] = fresh["config"]["seeds"]
+    old, new = prior["metadata"]["source_sha256"], fresh["metadata"]["source_sha256"]
+    changed = [f for f in old if f.startswith("src/") and old[f] != new.get(f)]
+    if changed:
+        raise ValueError(f"source differs from {path}: {changed}")
+    prior["metadata"].setdefault("resumes", []).append(fresh["metadata"])
+    prior["stopped_early"] = False
+    return prior
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     mode = parser.add_mutually_exclusive_group(required=True)
@@ -526,6 +546,7 @@ def main() -> None:
     parser.add_argument("--max-minutes", type=float, default=None, help="start no new job after this long")
     parser.add_argument("--threads", type=int, default=2)
     parser.add_argument("--out", type=Path, default=ROOT / "results" / "thread_a")
+    parser.add_argument("--resume-from", type=Path, default=None, help="continue a stopped run from its results file")
     args = parser.parse_args()
 
     cfg = smoke_config() if args.smoke else full_config()
@@ -567,6 +588,8 @@ def main() -> None:
         "summary": {},
         "stopped_early": False,
     }
+    if args.resume_from is not None:
+        output = resume_output(args.resume_from, output)
 
     def save() -> None:
         output["metadata"]["elapsed_s"] = time.perf_counter() - started
@@ -577,6 +600,8 @@ def main() -> None:
     # Seeds run in the outer loop, so a stopped run still has both families at equal depth.
     for seed in cfg.seeds:
         for family in cfg.families:
+            if str(seed) in output["jobs"][family]:
+                continue
             elapsed = (time.perf_counter() - started) / 60.0
             if args.max_minutes is not None and elapsed >= args.max_minutes:
                 output["stopped_early"] = True
