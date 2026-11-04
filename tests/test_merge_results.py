@@ -3,6 +3,7 @@
 import dataclasses
 import json
 import sys
+import types
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,7 +16,7 @@ import ci_tools  # noqa: E402
 import merge_results  # noqa: E402
 from merge_results import MergeRefused, NothingToMerge, load_input, merge  # noqa: E402
 
-MARKERS = {"a": "h3_methods", "b": "design_notes", "c": "baselines"}
+MARKERS = {"a": "h3_methods", "b": "design_notes", "c": "baselines", "e": "e_design", "f": "f_design", "g": "g_gates"}
 
 
 def make_doc(thread="a", seed=0, family="pendulum", job=None, n_boot=50, src="aaa", script="bbb", python="3.13.1", **config_extra):
@@ -389,6 +390,56 @@ def test_thread_c_summary_gets_a_real_config_rebuilt_from_json(monkeypatch):
     assert seen == {"family": "puck", "steps": full.train.steps, "n_boot": full.n_boot, "horizons": full.at_trained_horizons}
 
 
+# ---------------------------------------------------------------- threads E, F and G
+
+
+@pytest.mark.parametrize("thread", ["e", "f", "g"])
+def test_new_threads_merge_and_are_told_apart_by_their_marker(tmp_path, thread):
+    merged = run(tmp_path, [make_doc(thread, seed=5, family="drone"), make_doc(thread, seed=5, family="puck")], thread=thread).merged
+    assert merged["config"]["seeds"] == [5]
+    assert merged["config"]["families"] == ["drone", "puck"]
+    assert merged[MARKERS[thread]] == ["shared"]
+    with pytest.raises(MergeRefused, match=f"not a thread {thread} results file"):
+        load_input(put(tmp_path, "other", make_doc("a"), thread), thread)
+
+
+def test_marker_that_differs_between_jobs_is_refused(tmp_path):
+    other = make_doc("g", seed=6)
+    other["g_gates"] = ["different"]
+    with pytest.raises(MergeRefused, match="shared fields differ"):
+        run(tmp_path, [make_doc("g", seed=5), other], thread="g")
+
+
+@pytest.mark.parametrize("thread", ["e", "f", "g"])
+def test_new_threads_use_the_summary_interface_of_thread_a(monkeypatch, thread):
+    fake = types.ModuleType(f"thread_{thread}")
+    calls = []
+    fake.summarize = lambda jobs, n_boot: calls.append((sorted(jobs), n_boot)) or {"seeds": sorted(jobs)}
+    fake._jsonable = lambda x: x
+    monkeypatch.setitem(sys.modules, f"thread_{thread}", fake)
+    out = merge_results.recompute_summary(thread, {"drone": {"5": {}}, "puck": {}}, {"n_boot": 7})
+    assert calls == [(["5"], 7)]
+    assert out == {"drone": {"seeds": ["5"]}}
+
+
+def test_cli_accepts_the_new_threads(tmp_path):
+    out = tmp_path / "merged.json"
+    path = put(tmp_path, "job", make_doc("g", seed=5, family="drone"), "g")
+    code = merge_results.main(["--thread", "g", "--inputs", str(path), "--out", str(out)], summarize=fake_summary)
+    assert code == merge_results.EXIT_OK
+    assert json.loads(out.read_text(encoding="utf-8"))["jobs"]["drone"] == {"5": {"value": 5}}
+
+
+def test_thread_g_writes_a_marker_the_merge_accepts(tmp_path):
+    """Verdicts must not live in the marker: it has to match across jobs. The pipeline test is in test_thread_g.py."""
+    import thread_g
+
+    assert "g_gates" not in merge_results.PER_JOB_KEYS  # so a job file cannot carry per-job results in its marker
+    doc = make_doc("g", seed=5, family="puck")
+    doc["g_gates"] = thread_g.G_GATES
+    assert load_input(put(tmp_path, "job", json.loads(json.dumps(doc)), "g"), "g").doc["g_gates"]["G1"]["success"] == 0.5
+
+
 # ---------------------------------------------------------------- run requests
 
 
@@ -401,6 +452,18 @@ def test_valid_request_builds_the_matrix():
     assert outputs["families_args"] == "pendulum puck"
     assert outputs["note"] == "pilot"
     assert ci_tools.validate_request({"thread": "c", "seeds": [1], "families": ["puck"]})["note"] == ""
+
+
+@pytest.mark.parametrize("thread", ["e", "f", "g"])
+def test_requests_for_the_new_threads_and_the_drone_are_accepted(thread):
+    checked = ci_tools.validate_request({"thread": thread, "seeds": [5, 6, 7, 8, 9], "families": ["puck", "drone"], "note": "x"})
+    assert ci_tools.matrix_outputs(checked)["families"] == '["puck","drone"]'
+
+
+def test_families_in_requests_match_the_simulators():
+    from intr.envs import FAMILIES
+
+    assert set(ci_tools.FAMILIES) == set(FAMILIES)
 
 
 @pytest.mark.parametrize(

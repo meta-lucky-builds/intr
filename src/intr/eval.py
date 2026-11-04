@@ -174,6 +174,32 @@ def closed_loop(env: BatchEnv, predictor, task: Task, cfg: CEMConfig, gen, steps
     }
 
 
+@torch.no_grad()
+def collect_planned(
+    env: BatchEnv, predictor, task: Task, cfg: CEMConfig, gen, steps: int | None = None, action_noise: float = 0.0
+) -> Trajectories:
+    """Same loop as closed_loop, keeping the trajectory: training data from where a planner actually goes.
+
+    One trajectory per environment: obs (E, 1, steps + 1, O), act (E, 1, steps, A). action_noise is the std of Gaussian
+    noise on the executed action, so the data shows the effect of actions next to the planned one.
+    """
+    steps = env.episode_steps if steps is None else steps
+    E = env.n_envs
+    state = task.state
+    o = env.obs(state)[:, 0]
+    mean = torch.zeros(E, cfg.horizon, env.act_dim)
+    observed, taken = [o], []
+    for _ in range(steps):
+        action, mean = cem_plan(predictor, env, o, task.goal, mean, cfg, gen)
+        if action_noise > 0.0:
+            action = (action + action_noise * torch.randn(action.shape, generator=gen)).clamp(-1.0, 1.0)
+        state = env.step(state, action[:, None, :])
+        o = env.obs(state)[:, 0]
+        observed.append(o)
+        taken.append(action)
+    return Trajectories(torch.stack(observed, dim=1)[:, None], torch.stack(taken, dim=1)[:, None])
+
+
 def bootstrap_ci(values, n_boot: int = 10000, alpha: float = 0.05, seed: int = 0) -> tuple[float, float]:
     """Percentile bootstrap CI of the mean. values: one number per training seed.
 

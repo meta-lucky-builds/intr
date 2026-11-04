@@ -20,6 +20,7 @@ import time
 from dataclasses import dataclass, field
 
 import torch
+import torch.nn.functional as F
 from torch import Tensor
 
 from .envs import BatchEnv, Transitions, collect_mixed, derive_seed, make_generator
@@ -41,6 +42,20 @@ class TrainConfig:
     context_queries: int = 8
     context_max_k: int = 3
     control_lr_scale: float = 0.3  # warm restart: the original schedule has already decayed
+    # Opt-in options for Thread G. The defaults below reproduce the first round's training exactly.
+    loss: str = "mse"  # "mse" or "huber", for model and latent updates alike
+    huber_delta: float = 1.0  # in units of the normalized target
+    latent_samples_per_env: int = 0  # 0: a latent step uses batch_size draws, about 2 per environment at round-one sizes
+    latent_block_steps: int = 0  # latent updates per block; 0: block_steps
+    latent_lr_decay: bool = False  # follow the model's cosine; False keeps latent_lr constant
+
+
+def regression_loss(pred: Tensor, target: Tensor, tcfg: TrainConfig) -> Tensor:
+    if tcfg.loss == "mse":
+        return ((pred - target) ** 2).mean()
+    if tcfg.loss == "huber":
+        return F.huber_loss(pred, target, delta=tcfg.huber_delta)
+    raise ValueError(f"unknown loss {tcfg.loss!r}")
 
 
 @dataclass
@@ -67,6 +82,28 @@ class TransitionData:
         env_idx = torch.randint(self.n_envs, (batch,), generator=gen)
         t_idx = torch.randint(self.obs.shape[1], (batch,), generator=gen)
         return env_idx, self.obs[env_idx, t_idx], self.act[env_idx, t_idx], self.next_obs[env_idx, t_idx]
+
+    def sample_per_env(self, per_env: int, gen) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+        """per_env draws from every environment. env_idx (B,), o (B, O), a (B, A), next_o (B, O), B = E * per_env."""
+        E = self.n_envs
+        env_idx = torch.arange(E)[:, None].expand(E, per_env).reshape(-1)
+        t_idx = torch.randint(self.obs.shape[1], (E * per_env,), generator=gen)
+        return env_idx, self.obs[env_idx, t_idx], self.act[env_idx, t_idx], self.next_obs[env_idx, t_idx]
+
+    def extended(self, extra: Transitions) -> "TransitionData":
+        """More transitions from the same environments, after the existing ones.
+
+        n_traj and n_steps still describe the leading whole trajectories, so a context batch stays valid.
+        """
+        if extra.obs.shape[0] != self.n_envs:
+            raise ValueError(f"extra data has {extra.obs.shape[0]} environments, expected {self.n_envs}")
+        return TransitionData(
+            torch.cat([self.obs, extra.obs], dim=1),
+            torch.cat([self.act, extra.act], dim=1),
+            torch.cat([self.next_obs, extra.next_obs], dim=1),
+            self.n_traj,
+            self.n_steps,
+        )
 
 
 @dataclass
@@ -134,7 +171,7 @@ def _model_updates(model, optimizer, data, tcfg, gen, n, start, total, logger, z
         _set_lr(optimizer, _cosine_lr(base, start + i, total, tcfg.lr_floor))
         env_idx, o, a, next_o = data.sample(tcfg.batch_size, gen)
         z = None if z_table is None else z_table[env_idx].detach()  # (B, Z)
-        loss = ((model(o, a, z) - model.target(o, next_o)) ** 2).mean()
+        loss = regression_loss(model(o, a, z), model.target(o, next_o), tcfg)
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), tcfg.grad_clip)
@@ -176,9 +213,14 @@ def train_latent(data: TransitionData, cfg: ModelConfig, tcfg: TrainConfig, seed
 
     def latent_block(n: int) -> None:
         model.requires_grad_(False)
+        if tcfg.latent_lr_decay:
+            _set_lr(opt_latent, _cosine_lr(tcfg.latent_lr, done, total, tcfg.lr_floor))
         for _ in range(n):
-            env_idx, o, a, next_o = data.sample(tcfg.batch_size, gen)
-            loss = ((model(o, a, z_table[env_idx]) - model.target(o, next_o)) ** 2).mean()
+            if tcfg.latent_samples_per_env > 0:
+                env_idx, o, a, next_o = data.sample_per_env(tcfg.latent_samples_per_env, gen)
+            else:
+                env_idx, o, a, next_o = data.sample(tcfg.batch_size, gen)
+            loss = regression_loss(model(o, a, z_table[env_idx]), model.target(o, next_o), tcfg)
             opt_latent.zero_grad(set_to_none=True)
             loss.backward()
             opt_latent.step()
@@ -189,13 +231,14 @@ def train_latent(data: TransitionData, cfg: ModelConfig, tcfg: TrainConfig, seed
 
     # Latents get updated right after warmup, then model and latent blocks alternate. A latent block
     # comes last, so the final latents are consistent with the final model.
-    latent_block(tcfg.block_steps)
-    latent_updates += tcfg.block_steps
+    per_block = tcfg.latent_block_steps or tcfg.block_steps
+    latent_block(per_block)
+    latent_updates += per_block
     while done < total:
         n = min(tcfg.block_steps, total - done)
         done = _model_updates(model, opt_model, data, tcfg, gen, n, done, total, logger, z_table)
-        latent_block(tcfg.block_steps)
-        latent_updates += tcfg.block_steps
+        latent_block(per_block)
+        latent_updates += per_block
     logger.flush()
 
     z_final = z_table.detach().clone()

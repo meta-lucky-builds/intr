@@ -24,6 +24,26 @@ class ModelConfig:
     hidden: int = 128
     n_hidden: int = 2
     feature_dim: int = 64
+    input_extra: str = ""  # a key of INPUT_EXTRAS; empty means the input is exactly (norm_obs, a, z)
+
+
+def _puck_relative(o: Tensor) -> Tensor:
+    """Agent-to-puck geometry from a raw puck observation. (..., 8) -> (..., 8).
+
+    The contact boundary is a circle in relative position. An MLP on absolute positions has to build
+    that from scratch for every pair of positions; here it is a coordinate. PUCK_CONTACT_DISTANCE is 2 * PuckEnv.radius.
+    """
+    d = o[..., 2:4] - o[..., :2]
+    relative_velocity = o[..., 6:8] - o[..., 4:6]
+    dist = torch.sqrt((d * d).sum(-1, keepdim=True) + 1e-8)
+    normal = d / dist
+    gap = dist - PUCK_CONTACT_DISTANCE
+    approach = (relative_velocity * normal).sum(-1, keepdim=True)
+    return torch.cat([d, 0.3 * relative_velocity, 5.0 * gap, normal, 0.3 * approach], dim=-1)
+
+
+PUCK_CONTACT_DISTANCE = 0.2
+INPUT_EXTRAS = {"puck_relative": (8, _puck_relative)}  # name: (output size, function of the raw observation)
 
 
 @dataclass
@@ -45,6 +65,8 @@ class DynamicsModel(nn.Module):
         self.cfg = cfg
         layers = []
         d = cfg.obs_dim + cfg.act_dim + cfg.z_dim
+        if cfg.input_extra:
+            d += INPUT_EXTRAS[cfg.input_extra][0]
         for _ in range(cfg.n_hidden):
             layers.append(nn.Linear(d, cfg.hidden))
             d = cfg.hidden
@@ -80,6 +102,8 @@ class DynamicsModel(nn.Module):
     def hidden(self, o: Tensor, a: Tensor, z: Tensor | None = None) -> Tensor:
         """Output of the layers before ``last``. (..., h)."""
         parts = [self.norm_obs(o), a]
+        if self.cfg.input_extra:
+            parts.append(INPUT_EXTRAS[self.cfg.input_extra][1](o))
         if self.cfg.z_dim > 0:
             if z is None:
                 raise ValueError("model has z_dim > 0 but z is None")

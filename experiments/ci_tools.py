@@ -19,7 +19,7 @@ from pathlib import Path
 
 import merge_results
 
-FAMILIES = ("pendulum", "puck")
+FAMILIES = ("pendulum", "puck", "drone")  # the same as intr.envs.FAMILIES, which this file cannot import without torch
 REQUEST_KEYS = {"thread", "seeds", "families", "note"}
 MAX_SEED = 999
 MAX_JOBS = 40

@@ -9,11 +9,13 @@ Simulators are stateless: ``env.step(state, action)`` maps (E, B, S) and (E, B, 
 That makes vectorized planning, an oracle model, and iid-state sampling all the same code.
 State is float64 for integration accuracy; observations and actions at the API are float32.
 
-Time steps. Both simulators use a control step dt = 0.1 s:
+Time steps. All simulators use a control step dt = 0.1 s:
     pendulum: RK4 with 4 substeps (h = 0.025 s). Smooth dynamics, so RK4 conserves energy closely.
     puck: semi-implicit Euler with 20 substeps (h = 0.005 s). Penalty contact with k = 400 and the
         lightest puck (m = 0.15, reduced mass 0.13) has omega = sqrt(k / m) ~ 55 rad/s, so
         omega * h ~ 0.28, well inside the symplectic Euler limit of 2.
+    drone: RK4 with 4 substeps (h = 0.025 s). The fastest mode is rotational damping, c / I ~ 8 / s at
+        the lowest extrapolation inertia, so lambda * h ~ 0.2.
 
 Shift tiers (docs/HYPOTHESES.md):
     train      even "stripes" of each parameter's range.
@@ -38,7 +40,7 @@ from torch import Tensor
 DT = torch.float64
 OBS_DT = torch.float32
 
-FAMILIES = ("pendulum", "puck")
+FAMILIES = ("pendulum", "puck", "drone")
 TIERS = ("train", "val_in", "val_shift", "interp", "extrap", "oof")
 N_STRIPES = 9  # even stripes (5) for training, odd stripes (4) for interpolation
 
@@ -56,6 +58,13 @@ PUCK_RANGES = {"mass": (0.3, 1.0), "friction": (0.05, 0.3)}
 PUCK_EXTRAP = {
     "mass": [(0.15, 0.25), (1.2, 1.5)],
     "friction": [(0.01, 0.03), (0.35, 0.45)],
+}
+# Maximum thrust is 1.8 weights of a unit mass, so even the heaviest extrapolation band can hover and tilt.
+DRONE_RANGES = {"mass": (0.7, 1.3), "inertia": (0.10, 0.20), "drag": (0.2, 1.0)}
+DRONE_EXTRAP = {
+    "mass": [(0.5, 0.6), (1.4, 1.55)],
+    "inertia": [(0.06, 0.085), (0.24, 0.32)],
+    "drag": [(0.02, 0.1), (1.2, 1.6)],
 }
 
 
@@ -192,6 +201,9 @@ class BatchEnv:
 
     def push_direction(self, obs: Tensor) -> Tensor:
         raise NotImplementedError(f"{self.name} has no push policy")
+
+    def level_action(self, obs: Tensor) -> Tensor:
+        raise NotImplementedError(f"{self.name} has no level policy")
 
 
 class PendulumEnv(BatchEnv):
@@ -463,6 +475,194 @@ class PuckEnv(BatchEnv):
         """Puck center within success_dist of the goal at the final step."""
         return (obs_traj[:, -1, 2:4] - goal).norm(dim=-1) < self.success_dist
 
+    def reset_near_contact(self, n_traj: int, gen: torch.Generator) -> Tensor:
+        """Agent close to the puck and slow, the situation the push task needs. Used only by collect_contact_rich."""
+        state = self.reset(n_traj, gen)
+        E = self.n_envs
+        angle = _rand(gen, (E, n_traj), 0.0, 2 * math.pi)
+        reach = 2 * self.radius + _rand(gen, (E, n_traj), 0.0, 0.3)
+        offset = torch.stack([torch.cos(angle), torch.sin(angle)], dim=-1) * reach[..., None]
+        limit = self.half_size - self.radius
+        puck = (state[..., :2] + offset).clamp(-limit, limit)
+        return torch.cat([state[..., :2], puck, state[..., 4:]], dim=-1)
+
+
+class DroneEnv(BatchEnv):
+    """Planar quadrotor: two rotors on an arm, hidden mass, moment of inertia and translational drag.
+
+    state = (x, z, theta, vx, vz, omega); observation = (x, z, cos theta, sin theta, vx, vz, omega).
+
+        T_i = hover_thrust * rotor_gain_i * (1 + thrust_authority * act_gain * u_i),  u_i in [-1, 1]
+        m vx' = -(T_1 + T_2) sin(theta) - drag vx + wind_x
+        m vz' =  (T_1 + T_2) cos(theta) - drag vz + wind_z - m g
+        I omega' = arm (T_2 - T_1) - ang_damping omega
+
+    Why this is plannable with 32 candidates, 3 CEM iterations and a 1.2 s horizon, given a 0.1 s control step:
+    - Zero action is close to hover (it hovers at mass 1), so the zero-mean initial candidates stay near the
+      region that matters, as they do not for a system with a large gravity bias.
+    - Thrust ranges 0.2 to 1.8 weights of a unit mass. Hover needs u = (m - 1) / 0.8: 0.375 at the heaviest
+      training mass, 0.69 at the heaviest extrapolation mass. There is authority left to climb and to tilt.
+    - One full unit of rotor difference gives 0.785 N m, so 5.2 rad/s^2 at I = 0.15, settling at 1.6 rad/s
+      with time constant I / ang_damping = 0.3 s. Tilting 0.3 rad takes about 3 control steps: slower than
+      the control step, so a random-looking plan cannot flip the vehicle in one step, and much faster than the horizon.
+    - At 0.3 rad the lateral acceleration is about 3 m/s^2. From rest that covers more than 1 m in 1.2 s.
+      Stopping from 2 m/s takes about 0.3 s to reverse the tilt plus 0.7 s to brake, which fits the horizon,
+      so the planner sees an overshoot before committing to it. Drag helps.
+
+    The dynamics share nothing with the pendulum's: there is no restoring torque at all, and hidden mass acts
+    through thrust and drag rather than through a gravity torque. The attitude is an integrator with a lag, and
+    position hangs two more integrators below that.
+
+    Outside box_size a smooth (C1) force, quadratic in the excess, pushes back, so uncontrolled data stays bounded
+    without any discontinuity. Inside the box it is exactly zero; the task never needs to leave. Speeds are clipped as in the
+    pendulum, which only tumbling trajectories reach.
+    """
+
+    name = "drone"
+    obs_dim = 7
+    act_dim = 2
+    state_dim = 6
+    hidden_names = ("mass", "inertia", "drag")
+    data_policies = ("level", "iid")
+    default_probe = "level"
+    episode_steps = 60
+    plan_horizon = 12
+    n_substeps = 4
+    hover_thrust = 1.0 * G / 2.0  # per rotor, for unit mass
+    thrust_authority = 0.8
+    arm_length = 0.2
+    ang_damping = 0.5
+    box_size = 2.5
+    box_k = 5.0
+    max_speed = 15.0
+    max_omega = 15.0
+    success_window = 10
+    success_dist = 0.35
+    success_speed = 1.5
+    success_angle = 0.6
+
+    obs_low = torch.tensor([-6.0, -6.0, -1.5, -1.5, -16.0, -16.0, -16.0], dtype=OBS_DT)
+    obs_high = torch.tensor([6.0, 6.0, 1.5, 1.5, 16.0, 16.0, 16.0], dtype=OBS_DT)
+
+    @classmethod
+    def from_values(cls, mass, inertia, drag, wind=None, rotor_gain=None, act_gain=None) -> "DroneEnv":
+        mass = torch.as_tensor(mass, dtype=DT)
+        n = mass.shape[0]
+        params = {
+            "mass": mass,
+            "inertia": torch.as_tensor(inertia, dtype=DT),
+            "drag": torch.as_tensor(drag, dtype=DT),
+            "wind": torch.zeros(n, 2, dtype=DT) if wind is None else torch.as_tensor(wind, dtype=DT),
+            "rotor_gain": torch.ones(n, 2, dtype=DT) if rotor_gain is None else torch.as_tensor(rotor_gain, dtype=DT),
+            "act_gain": torch.ones(n, dtype=DT) if act_gain is None else torch.as_tensor(act_gain, dtype=DT),
+        }
+        return cls(params, ["none"] * n)
+
+    def reset(self, n_traj, gen):
+        E = self.n_envs
+        pos = _rand(gen, (E, n_traj, 2), -1.2, 1.2)
+        theta = _rand(gen, (E, n_traj, 1), -0.3, 0.3)
+        vel = _rand(gen, (E, n_traj, 2), -1.0, 1.0)
+        omega = _rand(gen, (E, n_traj, 1), -1.0, 1.0)
+        return torch.cat([pos, theta, vel, omega], dim=-1)
+
+    def reset_diverse(self, n_traj, gen):
+        """Wide attitudes and speeds. Hidden mass and inertia show at any state, so no special cases are needed."""
+        E = self.n_envs
+        pos = _rand(gen, (E, n_traj, 2), -self.box_size, self.box_size)
+        theta = _rand(gen, (E, n_traj, 1), -1.0, 1.0)
+        vel = _rand(gen, (E, n_traj, 2), -3.0, 3.0)
+        omega = _rand(gen, (E, n_traj, 1), -3.0, 3.0)
+        return torch.cat([pos, theta, vel, omega], dim=-1)
+
+    def _box_accel(self, pos: Tensor) -> Tensor:
+        """(E, B, 2) -> (E, B, 2). Zero inside the box, with zero slope at its edge."""
+        excess = (pos.abs() - self.box_size).clamp(min=0.0)
+        return -torch.sign(pos) * self.box_k * excess * excess
+
+    def step(self, state, action):
+        assert state.ndim == 3 and state.shape[0] == self.n_envs, state.shape
+        u = action.to(DT).clamp(-1.0, 1.0)  # (E, B, 2)
+        m = self.params["mass"][:, None]  # (E, 1)
+        inertia = self.params["inertia"][:, None]
+        c = self.params["drag"][:, None]
+        wind = self.params["wind"][:, None, :]  # (E, 1, 2)
+        gain = self.params["act_gain"][:, None, None]  # (E, 1, 1)
+        rotor = self.params["rotor_gain"][:, None, :]  # (E, 1, 2)
+        thrust = self.hover_thrust * rotor * (1.0 + self.thrust_authority * gain * u)  # (E, B, 2)
+        total = thrust.sum(dim=-1)  # (E, B)
+        moment = self.arm_length * (thrust[..., 1] - thrust[..., 0])  # (E, B)
+
+        def deriv(s: Tensor) -> Tensor:
+            th, vx, vz, om = s[..., 2], s[..., 3], s[..., 4], s[..., 5]
+            box = self._box_accel(s[..., :2])
+            ax = (-total * torch.sin(th) - c * vx + wind[..., 0]) / m + box[..., 0]
+            az = (total * torch.cos(th) - c * vz + wind[..., 1]) / m - G + box[..., 1]
+            alpha = (moment - self.ang_damping * om) / inertia
+            return torch.stack([vx, vz, om, ax, az, alpha], dim=-1)
+
+        s = state
+        h = self.dt / self.n_substeps
+        for _ in range(self.n_substeps):
+            k1 = deriv(s)
+            k2 = deriv(s + 0.5 * h * k1)
+            k3 = deriv(s + 0.5 * h * k2)
+            k4 = deriv(s + h * k3)
+            s = s + (h / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+        th = torch.atan2(torch.sin(s[..., 2]), torch.cos(s[..., 2]))
+        vel = s[..., 3:5].clamp(-self.max_speed, self.max_speed)
+        om = s[..., 5].clamp(-self.max_omega, self.max_omega)
+        return torch.cat([s[..., :2], th[..., None], vel, om[..., None]], dim=-1)
+
+    def obs(self, state):
+        x, z, th, vx, vz, om = state.unbind(dim=-1)
+        return torch.stack([x, z, torch.cos(th), torch.sin(th), vx, vz, om], dim=-1).to(OBS_DT)
+
+    def state_from_obs(self, obs):
+        o = obs.to(DT)
+        th = torch.atan2(o[..., 3], o[..., 2])
+        return torch.stack([o[..., 0], o[..., 1], th, o[..., 4], o[..., 5], o[..., 6]], dim=-1)
+
+    def level_action(self, obs):
+        """Cascaded feedback toward the origin, using no hidden parameter. Data policy; never the task's controller.
+
+        The gains keep attitude near level and the vehicle near the task's region, which free random actions do
+        not, since mass away from 1 alone accelerates at up to 3 m/s^2. Noise is added by the caller.
+        """
+        theta = torch.atan2(obs[..., 3], obs[..., 2])
+        theta_ref = (0.08 * obs[..., 0] + 0.12 * obs[..., 4]).clamp(-0.4, 0.4)
+        difference = 1.5 * (theta_ref - theta) - 0.3 * obs[..., 6]
+        collective = -0.4 * obs[..., 1] - 0.4 * obs[..., 5]
+        return torch.stack([collective - 0.5 * difference, collective + 0.5 * difference], dim=-1)
+
+    def sample_task(self, gen):
+        """Fly from near rest to a goal at least 0.8 away and hold there. Best effort rejection, 20 tries."""
+        E = self.n_envs
+        start = _rand(gen, (E, 2), -1.0, 1.0)
+        goal = _rand(gen, (E, 2), -1.0, 1.0)
+        for _ in range(20):
+            bad = (goal - start).norm(dim=-1) < 0.8
+            if not bad.any():
+                break
+            goal = torch.where(bad[:, None], _rand(gen, (E, 2), -1.0, 1.0), goal)
+        theta = _rand(gen, (E, 1), -0.1, 0.1)
+        state = torch.cat([start, theta, torch.zeros(E, 3, dtype=DT)], dim=-1)[:, None, :]  # (E, 1, 6)
+        return Task(state=state, goal=goal.to(OBS_DT))
+
+    def cost(self, obs, action, goal):
+        to_goal = (obs[..., :2] - goal[:, None, :]).norm(dim=-1)
+        speed2 = (obs[..., 4:6] ** 2).sum(-1)
+        return to_goal + 0.02 * speed2 + 0.5 * (1.0 - obs[..., 2]) + 0.005 * obs[..., 6] ** 2 + 1e-3 * (action**2).sum(-1)
+
+    def is_success(self, obs_traj, goal):
+        """Near the goal, slow and roughly level for the last success_window observations."""
+        window = min(self.success_window, obs_traj.shape[1])
+        last = obs_traj[:, -window:]
+        near = (last[..., :2] - goal[:, None, :]).norm(dim=-1) < self.success_dist
+        slow = last[..., 4:6].norm(dim=-1) < self.success_speed
+        level = last[..., 2] >= math.cos(self.success_angle)
+        return (near & slow & level).all(dim=1)
+
 
 def _sample_pendulum(n: int, tier: str, seed) -> PendulumEnv:
     gen = make_generator("pendulum", tier, seed)
@@ -517,12 +717,44 @@ def _sample_puck(n: int, tier: str, seed) -> PuckEnv:
     return PuckEnv(params, mechanisms, tier)
 
 
+def _sample_drone(n: int, tier: str, seed) -> DroneEnv:
+    gen = make_generator("drone", tier, seed)
+    hidden = _sample_hidden(gen, n, tier, DRONE_RANGES, DRONE_EXTRAP)
+    wind = torch.zeros(n, 2, dtype=DT)
+    rotor_gain = torch.ones(n, 2, dtype=DT)
+    act_gain = torch.ones(n, dtype=DT)
+    mechanisms = ["none"] * n
+    if tier == "val_shift":
+        act_gain = _rand(gen, (n,), 0.5, 0.7)  # both rotors respond less; no test tier does this
+        mechanisms = ["actuator_gain"] * n
+    elif tier == "oof":
+        names = ("wind", "weak_rotor")
+        mechanisms = [names[i % 2] for i in range(n)]
+        # Draw every field for every env, then mask, so the draws do not depend on the mix.
+        angle = _rand(gen, (n,), 0.0, 2 * math.pi)
+        strength = _rand(gen, (n,), 1.0, 2.5)  # N, against a weight of 6.9 to 12.8 N over training
+        wind_all = torch.stack([torch.cos(angle), torch.sin(angle)], dim=1) * strength[:, None]
+        # One rotor loses 10% to 25%. Level flight then needs a steady rotor difference no training
+        # environment needed. At 0.75, thrust with zero torque tops out at 13.2 N, above the heaviest weight.
+        weak = _rand(gen, (n,), 0.75, 0.9)
+        left = _rand(gen, (n,)) < 0.5
+        one = torch.ones(n, dtype=DT)
+        rotor_all = torch.stack([torch.where(left, weak, one), torch.where(left, one, weak)], dim=1)
+        m = lambda name: torch.tensor([x == name for x in mechanisms])
+        wind = torch.where(m("wind")[:, None], wind_all, wind)
+        rotor_gain = torch.where(m("weak_rotor")[:, None], rotor_all, rotor_gain)
+    params = {**hidden, "wind": wind, "rotor_gain": rotor_gain, "act_gain": act_gain}
+    return DroneEnv(params, mechanisms, tier)
+
+
 def make_env(family: str, n_envs: int, tier: str, seed) -> BatchEnv:
     """Sample n_envs environments. Same (family, n_envs, tier, seed) gives identical parameters."""
     if family == "pendulum":
         return _sample_pendulum(n_envs, tier, seed)
     if family == "puck":
         return _sample_puck(n_envs, tier, seed)
+    if family == "drone":
+        return _sample_drone(n_envs, tier, seed)
     raise ValueError(f"unknown family {family!r}, expected one of {FAMILIES}")
 
 
@@ -537,6 +769,10 @@ def _policy_action(env: BatchEnv, policy: str, obs: Tensor, noise: Tensor | None
         return (0.8 * noise).clamp(-1.0, 1.0), noise
     if policy == "push":
         return (0.8 * env.push_direction(obs) + 0.4 * noise).clamp(-1.0, 1.0), noise
+    if policy == "level":
+        # Half the push policy's noise: a rotor difference held for the 1 s noise correlation tilts about 0.2 rad, so
+        # lateral speed reaches about 1 to 2 m/s, as in the task. At 0.4 most trajectories would leave the box sideways.
+        return (env.level_action(obs) + 0.2 * noise).clamp(-1.0, 1.0), noise
     raise ValueError(f"unknown policy {policy!r}")
 
 
@@ -548,6 +784,32 @@ def collect_trajectories(env: BatchEnv, n_traj: int, n_steps: int, policy: str, 
     noise = None
     for _ in range(n_steps):
         a, noise = _policy_action(env, policy, o, noise, gen)
+        state = env.step(state, a)
+        o = env.obs(state)
+        obs.append(o)
+        act.append(a)
+    return Trajectories(torch.stack(obs, dim=2), torch.stack(act, dim=2))
+
+
+@torch.no_grad()
+def collect_contact_rich(env: PuckEnv, n_traj: int, n_steps: int, gen) -> Trajectories:
+    """Pushes at a strength drawn per trajectory, from close by. Opt-in training data; no default path uses it.
+
+    The default push policy reaches about 2 m/s, so a push is one hard collision and the puck flies off. The task
+    is won by slow repeated contact. Terminal speed is 2.5 * strength m/s, so strengths from 0.15 cover the
+    slow pushes where friction stops the puck between touches and the agent catches up.
+    """
+    E = env.n_envs
+    state = env.reset_near_contact(n_traj, gen)
+    strength = _rand(gen, (E, n_traj, 1), 0.15, 1.0).to(OBS_DT)
+    o = env.obs(state)
+    obs, act = [o], []
+    noise = None
+    rho = 0.9
+    for _ in range(n_steps):
+        eps = torch.randn(E, n_traj, env.act_dim, generator=gen)
+        noise = eps if noise is None else rho * noise + math.sqrt(1.0 - rho * rho) * eps
+        a = (strength * env.push_direction(o) + 0.25 * noise).clamp(-1.0, 1.0)
         state = env.step(state, a)
         o = env.obs(state)
         obs.append(o)

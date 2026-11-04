@@ -28,8 +28,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-THREADS = ("a", "b", "c")
-THREAD_MARKERS = {"a": "h3_methods", "b": "design_notes", "c": "baselines"}  # a top-level key only that thread writes
+THREADS = ("a", "b", "c", "e", "f", "g")
+# A top-level key only that thread writes. It has to be the same in every job of a thread, like any other shared field.
+THREAD_MARKERS = {"a": "h3_methods", "b": "design_notes", "c": "baselines", "e": "e_design", "f": "f_design", "g": "g_gates"}
 ENV_KEYS = ("python", "torch", "numpy", "platform", "torch_threads")
 WARN_IF_MIXED = ("python", "torch", "numpy", "torch_threads")
 PER_JOB_KEYS = {"config", "jobs", "summary", "metadata", "stopped_early", "selection"}  # all else must match exactly
@@ -186,13 +187,13 @@ def recompute_summary(thread: str, jobs: dict, config: dict) -> dict:
     """The thread's own summary function, exactly as its main() calls it, over {family: {seed: job}}."""
     module = importlib.import_module(f"thread_{thread}")
     revived = revive_nan(jobs)
-    if thread == "a":
-        summary = {f: module.summarize(j, config["n_boot"]) for f, j in revived.items() if j}
-    elif thread == "b":
+    if thread == "b":
         summary = {f: module.summarize(j, config["a"]["n_boot"]) for f, j in revived.items() if j}
-    else:
+    elif thread == "c":
         cfg = module.ThreadCConfig(**{**config, "train": module.LoopTrainConfig(**config["train"])})
         summary = {f: module.summarize(f, j, cfg) for f, j in revived.items() if j}
+    else:  # Thread A's interface: summarize(jobs_of_one_family, n_boot), _jsonable, and a top-level config.n_boot
+        summary = {f: module.summarize(j, config["n_boot"]) for f, j in revived.items() if j}
     return module._jsonable(summary)
 
 
