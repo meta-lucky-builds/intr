@@ -2,6 +2,7 @@
 
 import json
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -11,10 +12,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "experiments"))
 
 import merge_results  # noqa: E402
+import thread_a  # noqa: E402
 import thread_f  # noqa: E402
+import thread_g  # noqa: E402
 from intr.adapt import RLSState  # noqa: E402
 from intr.ebayes import NO_WRITE_LAMBDA, logdet_precision_gain  # noqa: E402
 from intr.envs import FAMILIES, collect_trajectories, make_env, make_generator  # noqa: E402
+from intr.models import ModelConfig  # noqa: E402
 from intr.train import TrainConfig  # noqa: E402
 
 A, B, NDD = "a_wins", "b_wins", "no_detectable_difference"
@@ -545,6 +549,20 @@ def test_main_writes_files_that_merge(job, tmp_path, monkeypatch):
     assert result.merged["config"]["seeds"] == [5, 6]
 
 
+def test_families_with_different_training_merge(job, tmp_path, monkeypatch):
+    """Files name only their own family and seed. Training differs per family, and the shared config and f_design must not."""
+    monkeypatch.setattr(thread_f, "run_job", lambda family, seed, cfg: job)
+    inputs = []
+    for family, seed in (("puck", 5), ("pendulum", 6)):
+        out = tmp_path / family
+        thread_f.main(["--smoke", "--seed-list", str(seed), "--families", family, "--threads", "1", "--out", str(out)])
+        inputs.append(merge_results.load_input(out / "thread_f_smoke.json", "f"))
+    assert inputs[0].doc["f_design"] == inputs[1].doc["f_design"]
+    merged = merge_results.merge("f", inputs).merged
+    assert sorted(merged["jobs"]) == ["pendulum", "puck"]
+    assert merged["config"]["family_arms"] == thread_f.FAMILY_ARMS
+
+
 def test_max_minutes_stops_before_starting_a_job(tmp_path):
     thread_f.main(["--smoke", "--seed-list", "5", "--families", "pendulum", "--max-minutes", "0", "--threads", "1", "--out", str(tmp_path)])
     doc = json.loads((tmp_path / "thread_f_smoke.json").read_text(encoding="utf-8"))
@@ -560,10 +578,79 @@ def test_second_family_runs_through_the_job():
     assert not summary["gates"]["checks"]["g1_required"]
 
 
+def test_puck_runs_through_the_job_at_its_larger_size():
+    """Every adaptation method, H13 and H5 on the larger model. Tiny, but with K = 3 under F, on the dual path as at full size."""
+    cfg = _tiny()
+    cfg.n_eval_envs, cfg.n_val_envs, cfg.n_streams, cfg.n_val_streams = 6, 4, 6, 4  # smoke's values, for puck's mechanisms
+    cfg.adapt_steps = 10
+    arm = next(a for a in thread_g.ARMS if a.name == "capacity_updates")
+    feature_dim = cfg.feature_dim * arm.width_scale
+    assert max(cfg.ks) * cfg.adapt_steps <= feature_dim
+
+    job = thread_f._jsonable(thread_f.run_job("puck", 5, cfg))
+    assert job["train"]["settings"]["arm"] == "capacity_updates"
+    assert job["train"]["settings"]["model_latent"]["feature_dim"] == feature_dim
+    assert job["train"]["control"]["stats"]["extra_steps"] == job["train"]["latent"]["stats"]["latent_updates"]
+    info = job["tiers"]["interp"]["k"]["3"]["hybrid_eb@latent"]["info"]["eb"]
+    assert info["feature_dim"] == feature_dim and info["path"] == "dual"
+    summary = thread_f.summarize({"5": job, "6": job}, 100)
+    assert summary["gates"]["checks"]["g1_required"]
+    assert summary["H5"]["gated_outcome"] == "outside_registered_scope"
+
+
+@pytest.mark.parametrize("make_cfg", [thread_f.full_config, thread_f.smoke_config])
+def test_training_per_family_resolves_as_intended(make_cfg):
+    cfg = make_cfg()
+    for family in ("pendulum", "drone"):  # the first-round settings, unchanged
+        env = make_env(family, 2, "train", 0)
+        with_z, no_z, tcfg = thread_f.training_for(family, env, cfg)
+        assert tcfg == cfg.train
+        assert with_z == ModelConfig(env.obs_dim, env.act_dim, cfg.z_dim, cfg.hidden, cfg.n_hidden, cfg.feature_dim)
+        assert no_z == ModelConfig(env.obs_dim, env.act_dim, 0, cfg.hidden, cfg.n_hidden, cfg.feature_dim)
+
+    env = make_env("puck", 2, "train", 0)
+    arm = next(a for a in thread_g.ARMS if a.name == "capacity_updates")
+    with_z, no_z, tcfg = thread_f.training_for("puck", env, cfg)
+    assert with_z == thread_g.arm_model_config(arm, env, cfg, cfg.z_dim)
+    assert no_z == thread_g.arm_model_config(arm, env, cfg, 0)
+    assert tcfg == thread_g.arm_train_config(arm, cfg)
+    assert with_z.feature_dim > cfg.feature_dim and with_z.n_hidden > cfg.n_hidden and tcfg.model_steps > cfg.train.model_steps
+
+    with pytest.raises(ValueError):
+        thread_f.family_arm("not_a_family", cfg)
+
+
+def test_base_settings_are_the_first_round_config():
+    a, f = thread_a.full_config(), thread_f.full_config()
+    assert f.train == a.train
+    for key in ("z_dim", "hidden", "n_hidden", "feature_dim", "train_envs", "train_traj", "train_steps"):
+        assert getattr(f, key) == getattr(a, key), key
+
+
+def test_config_and_design_do_not_depend_on_the_job():
+    def doc(seeds, families):
+        cfg = thread_f.full_config()
+        cfg.seeds, cfg.families = seeds, families
+        stored = thread_f._jsonable({"config": asdict(cfg), "f_design": thread_f.f_design(cfg)})
+        return json.loads(json.dumps(stored))
+
+    a, b = doc([5], ["puck"]), doc([9], ["drone"])
+    assert merge_results.core_config(a, "f") == merge_results.core_config(b, "f")
+    assert a["f_design"] == b["f_design"]
+
+    choices = a["f_design"]["fixed_choices"]
+    assert choices["g1_status"] == thread_f.G1_STATUS
+    settings = choices["family_training_settings"]
+    assert set(settings) == {"pendulum", "drone", "puck"}
+    assert settings["puck"]["arm"]["name"] == "capacity_updates"
+    assert settings["pendulum"]["arm"]["name"] == settings["drone"]["arm"]["name"] == thread_g.BASELINE_ARM
+    assert settings["drone"]["train"] == asdict(thread_f.full_config().train)
+
+
 def test_configs_keep_the_protocol_sizes_and_the_requested_defaults():
     full = thread_f.full_config()
     assert full.seeds == [5, 6, 7, 8, 9]
-    assert full.families == ["pendulum", "drone"]
+    assert full.families == ["pendulum", "drone", "puck"]
     assert full.n_eval_envs >= 20 and full.n_streams >= 20 and full.n_val_envs >= 20
     assert full.ks[0] == thread_f.PRIMARY_K
     assert min(full.val_lambdas) < 1e-3 and max(full.val_lambdas) == NO_WRITE_LAMBDA
@@ -585,5 +672,5 @@ def test_design_block_does_not_depend_on_the_job():
 
 def test_fingerprint_covers_the_threads_it_reuses():
     hashes = thread_f.fingerprint()
-    for name in ("experiments/thread_f.py", "experiments/thread_a.py", "experiments/thread_b.py", "src/intr/ebayes.py"):
+    for name in ("experiments/thread_f.py", "experiments/thread_a.py", "experiments/thread_b.py", "experiments/thread_g.py", "src/intr/ebayes.py"):
         assert name in hashes

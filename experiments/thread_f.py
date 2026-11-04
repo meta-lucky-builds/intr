@@ -1,13 +1,13 @@
 """Thread F and the coverage part of Thread B: H1r, H12, H13, H5 (docs/HYPOTHESES.md, "Second round").
 
     python experiments/thread_f.py --smoke     # checks the pipeline; numbers mean nothing
-    python experiments/thread_f.py --full      # seeds 5-9 on pendulum and drone. Puck runs only when asked: --families puck
+    python experiments/thread_f.py --full      # seeds 5-9 on pendulum, drone and puck
 
 Writes results/thread_f/thread_f_<mode>.json after every (seed, family) job. Second-round hypotheses are post hoc, so they
 are tested on seeds 5-9 and on a new family, never on the seeds that formed them.
 
 A job, per training seed and family:
-    1. Train latent, nolatent and the matched control with Thread A's functions and settings.
+    1. Train latent, nolatent and the matched control with Thread A's functions, at the family's settings (FAMILY_ARMS).
     2. Select on val_in and val_shift only. Wider grids than round one, each with a no-write entry (Problem 7).
     3. Per test tier, one set of adaptation trajectories, held-out trajectories and tasks serves every arm of a comparison
        (Problem 12). data_sha256 records this. Open loop at every K; closed loop at K = 1.
@@ -86,6 +86,7 @@ from intr.looped import saturation_reference  # noqa: E402
 from intr.models import Counts, ModelConfig, clip_obs  # noqa: E402
 from intr.train import (  # noqa: E402
     Backbone,
+    TrainConfig,
     TransitionData,
     continued_training,
     latent_r2,
@@ -118,6 +119,7 @@ from thread_b import (  # noqa: E402
     make_policy,
     validation_streams,
 )
+from thread_g import ARMS, BASELINE_ARM, Arm, arm_model_config, arm_train_config, effective_arm  # noqa: E402
 
 ORACLE_GATE = 0.5  # HYPOTHESES.md, second round, for closed-loop validity and for the family gates
 LATENT_GATE = 0.10  # the latent must lower training loss by this much
@@ -129,8 +131,23 @@ H13_REFERENCES = ("oracle_reset", "frozen")
 H5_ARMS = ("default", "random_action", "dopt", "iid_state")
 USABLE = ("a_wins", "b_wins", "no_detectable_difference")
 SCOPE_LIMIT = "Small state-based simulators on CPU; no claim about pixels, large models, or real robots."
+# Training per family, named as arms of thread_g.ARMS. Static, so the config is the same in every job, which merge_results requires.
+FAMILY_ARMS = {"pendulum": BASELINE_ARM, "drone": BASELINE_ARM, "puck": "capacity_updates"}
+G1_STATUS = (
+    "Not established when this was fixed. Thread G's rule, which reads validation only, chose capacity_updates for puck on seed 5 "
+    "alone: closed-loop success on val_in 0.825 against 0.025 for round_one, over 40 environments. Seeds 6-9 of that sweep were not in. "
+    "G1 is scored on this thread's own interp tier in summary.puck.gates, and puck outcomes are gated on that."
+)
 
 FIXED_CHOICES = {
+    "family_training": (
+        "Training is set per family in config.family_arms, as an arm of thread_g.ARMS, never by a job or by a result read at run time. "
+        "Pendulum and drone use round_one, the first-round settings, and puck uses capacity_updates. family_training_settings holds what "
+        "these resolve to. Selection and comparisons stay within a family, so no verdict compares models of different sizes. Puck's larger "
+        "feature dimension leaves K = 3 with fewer transitions than features, so its evidence takes the dual path there, where other "
+        "families take the primal one. Both are exact."
+    ),
+    "g1_status": G1_STATUS,
     "no_worse": "Protocol reading: worse means the paired CI excludes 0 and the difference is at least 10% (verdict b_wins).",
     "rls_comparator": "RLS in H1r and H12 is the better of rls@latent and rls@nolatent by raw validation h10, per seed (fixes Problem 4).",
     "better_single": (
@@ -182,7 +199,8 @@ FIXED_CHOICES = {
 
 @dataclass
 class ThreadFConfig(ThreadAConfig):
-    families: list[str] = field(default_factory=lambda: ["pendulum", "drone"])
+    families: list[str] = field(default_factory=lambda: ["pendulum", "drone", "puck"])
+    family_arms: dict[str, str] = field(default_factory=lambda: dict(FAMILY_ARMS))  # every family, whichever ones this job runs
     open_loop_tiers: list[str] = field(default_factory=lambda: ["interp", "extrap", "oof"])
     h3_tiers: list[str] = field(default_factory=list)  # inherited field, unused here
     val_lambdas: list[float] = field(default_factory=lambda: [10.0**e for e in range(-6, 7)] + [ebayes.NO_WRITE_LAMBDA])
@@ -289,18 +307,48 @@ def exact_train_losses(backbones: dict[str, Backbone], data: TransitionData) -> 
     return out
 
 
+def family_arm(family: str, cfg: ThreadFConfig) -> Arm:
+    """The Thread G arm this family trains with. train_backbones uses the base data only, so an arm that adds data is refused."""
+    if family not in cfg.family_arms:
+        raise ValueError(f"no training settings for family {family!r}; config.family_arms has {sorted(cfg.family_arms)}")
+    arm = effective_arm({a.name: a for a in ARMS}[cfg.family_arms[family]], family)
+    if arm.contact_data or arm.planner_rounds > 0:
+        raise ValueError(f"arm {arm.name!r} changes the training data, which Thread F does not support")
+    return arm
+
+
+def training_for(family: str, env: BatchEnv, cfg: ThreadFConfig) -> tuple[ModelConfig, ModelConfig, TrainConfig]:
+    """Latent model, no-latent model and training config for a family, from Thread G's own definition of its arm."""
+    arm = family_arm(family, cfg)
+    return arm_model_config(arm, env, cfg, cfg.z_dim), arm_model_config(arm, env, cfg, 0), arm_train_config(arm, cfg)
+
+
+def family_training_settings(cfg: ThreadFConfig) -> dict:
+    """What every family in config.family_arms resolves to, whichever families this job runs."""
+    out = {}
+    for family in cfg.family_arms:
+        with_z, no_z, tcfg = training_for(family, make_env(family, 1, "train", "bounds"), cfg)
+        out[family] = {
+            "arm": asdict(family_arm(family, cfg)),
+            "model_latent": asdict(with_z),
+            "model_nolatent": asdict(no_z),
+            "train": asdict(tcfg),
+        }
+    return out
+
+
 def train_backbones(family: str, seed: int, cfg: ThreadFConfig) -> tuple[dict[str, Backbone], dict]:
-    """thread_a.train_all without context. Each trainer seeds itself, so skipping it changes nothing else."""
+    """thread_a.train_all without context, at the family's settings. Each trainer seeds itself, so skipping it changes nothing else."""
     gen = make_generator("data", family, seed)
     env = make_env(family, cfg.train_envs, "train", derive_seed("train_envs", seed))
     data = TransitionData.collect(env, cfg.train_traj, cfg.train_steps, gen)
-    with_z = ModelConfig(env.obs_dim, env.act_dim, cfg.z_dim, cfg.hidden, cfg.n_hidden, cfg.feature_dim)
-    no_z = ModelConfig(env.obs_dim, env.act_dim, 0, cfg.hidden, cfg.n_hidden, cfg.feature_dim)
-    latent = train_latent(data, with_z, cfg.train, seed)
-    nolatent = train_nolatent(data, no_z, cfg.train, seed)
-    control = continued_training(nolatent, data, latent.stats["latent_updates"], cfg.train, seed)
+    with_z, no_z, tcfg = training_for(family, env, cfg)
+    latent = train_latent(data, with_z, tcfg, seed)
+    nolatent = train_nolatent(data, no_z, tcfg, seed)
+    control = continued_training(nolatent, data, latent.stats["latent_updates"], tcfg, seed)
     backbones = {"latent": latent, "nolatent": nolatent, "control": control}
     record = {name: {"stats": b.stats, "final_log": b.log[-3:]} for name, b in backbones.items()}
+    record["settings"] = {"arm": family_arm(family, cfg).name, "model_latent": asdict(with_z), "train": asdict(tcfg)}
     record["latent_r2"] = dict(zip(env.hidden_names, latent_r2(latent.z_table, env.hidden_matrix())))
     record["exact_train_loss"] = exact_train_losses(backbones, data)
     return backbones, record
@@ -1388,15 +1436,19 @@ def summarize(jobs: dict, n_boot: int) -> dict:
 
 
 def fingerprint() -> dict:
-    """src/intr, thread_a and thread_b (which supply training and streams), and this file."""
+    """src/intr, thread_a, thread_b and thread_g (which supply training, streams and arms), and this file."""
     out = source_fingerprint()
-    for path in (ROOT / "experiments" / "thread_b.py", Path(__file__).resolve()):
+    for path in (ROOT / "experiments" / "thread_b.py", ROOT / "experiments" / "thread_g.py", Path(__file__).resolve()):
         out[str(path.relative_to(ROOT)).replace("\\", "/")] = hashlib.sha256(path.read_bytes()).hexdigest()
     return out
 
 
-def f_design() -> dict:
-    """The thread marker for merge_results. Must not depend on the job: every input has to match exactly."""
+def f_design(cfg: ThreadFConfig | None = None) -> dict:
+    """The thread marker for merge_results. Must not depend on the job: every input has to match exactly.
+
+    cfg only sets the mode's sizes behind the per-family settings. Seeds and families are not read.
+    """
+    cfg = full_config() if cfg is None else cfg
     return {
         "hypotheses": ["H1r", "H12", "H13", "H5"],
         "primary_horizon": PRIMARY_HORIZON,
@@ -1414,7 +1466,7 @@ def f_design() -> dict:
             "sigma_mode": "shared",
             "sensitivity": "per_output",
         },
-        "fixed_choices": FIXED_CHOICES,
+        "fixed_choices": {**FIXED_CHOICES, "family_training_settings": family_training_settings(cfg)},
     }
 
 
@@ -1424,7 +1476,7 @@ def main(argv=None) -> None:
     mode.add_argument("--smoke", action="store_true", help="tiny settings, checks the pipeline")
     mode.add_argument("--full", action="store_true", help="protocol settings")
     parser.add_argument("--seed-list", type=int, nargs="+", default=None, help="exact training seeds; default 5 to 9")
-    parser.add_argument("--families", nargs="+", default=None, help="default pendulum and drone; puck only when named")
+    parser.add_argument("--families", nargs="+", default=None, help="default pendulum, drone and puck")
     parser.add_argument("--max-minutes", type=float, default=None, help="start no new job after this long")
     parser.add_argument("--threads", type=int, default=2)
     parser.add_argument("--out", type=Path, default=ROOT / "results" / "thread_f")
@@ -1442,7 +1494,7 @@ def main(argv=None) -> None:
     started = time.perf_counter()
     output = {
         "config": asdict(cfg),
-        "f_design": f_design(),
+        "f_design": f_design(cfg),
         "conditions": [asdict(c) for c in conditions_for(cfg)],
         "registered_methods": sorted(METHODS),
         "metadata": {
