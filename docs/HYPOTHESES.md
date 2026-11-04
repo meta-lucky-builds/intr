@@ -201,6 +201,71 @@ but its edits may be sparser and easier to explain.
 - This thread is exploratory, with few runs and an agent-dependent method, so results are reported as case
   studies rather than effect estimates.
 
+## Second round (post hoc: formed after seeing the first results)
+
+These come from reading `docs/RESULTS.md`, so they are not independent of it. Each is tested on data not used to form it:
+new seeds 5-9 and, where stated, a new family. The protocol and effect threshold above still apply.
+
+### Benchmark repair, required before any further puck verdict
+
+**Gate G1.** A puck model must reach closed-loop success of at least 0.5 on interp with no adaptation, and its latent must
+lower training loss by at least 10% against no latent. Until both hold, puck results are not evidence for or against any
+method. Report what fixed it, or that nothing did within the budget.
+
+**Second working family.** Add one smooth system with hidden parameters, unrelated to the pendulum's equations, so that no
+claim rests on a single system. It must pass the same gates: oracle success at least 0.5 on interp, and the latent lowering
+training loss by at least 10%.
+
+### Thread F: replication and capacity on demand
+
+**H1r. Replication.** H1's crossover holds on the second family and, if G1 passes, on puck.
+- Kill: one method wins both tiers on a family that passes its gates.
+
+**H12. Empirical-Bayes write strength.** Choosing RLS `lambda` and noise scale per environment by maximizing the Bayesian
+marginal likelihood of the adaptation data, using no validation set, makes the write as strong as that environment needs.
+Predictions on latent-then-RLS with this rule:
+- It beats H2's validation-chosen hybrid out-of-family.
+- It is no worse than `latent_opt` on interp and no worse than RLS out-of-family, so one method is no worse than the better
+  single method in both tiers. This is what H2 failed to deliver.
+- On a family where writes do not help, it picks weak writes by itself and is no worse than frozen.
+- Kill: worse than the better single method in any tier on a family that passes its gates.
+- Risk to check: with K = 1 the evidence may be poorly identified or overconfident. Report the selected values per tier.
+
+**H13. Prior-preserving forgetting.** Forgetting toward `W0` (decaying the posterior back to the prior rather than letting the
+prior itself decay) matches or beats reset under switching, and beats plain forgetting, without needing to know when
+switches happen. Compare with per-episode reset, plain forgetting, and surprise reset. Prior work exists (ARCADE, Neural-Fly),
+so this is largely a replication on this benchmark.
+- Kill: no better than plain forgetting.
+
+### Thread B continued: coverage
+
+**H5 (restated, pendulum and the second family only).** In the first round, data coverage moved RLS by 3.2x with collinearity
+unchanged, so probing is registered in terms of coverage. Probes chosen by greedy D-optimal design on `phi' P phi`, using the
+model's own predictions, get closer to the iid-state ceiling than the default probe and random actions at the same K.
+- Kill: no detectable gain over random-action probes at K = 1.
+
+**H6** runs next if H5 holds, on the same families, with the original kill criterion.
+
+### Thread E: a loop that sees its own error
+
+**H14. Error-fed loops as amortized adaptation.** In the first round, carried state was inert and the residual near chance,
+plausibly because the state is fully observed and the loop never sees its own prediction error. Feed the previous step's
+prediction error into the loop's injection, so carried state can act as an online filter for hidden physics. Train over long
+enough windows for this to matter. Predictions:
+- The state becomes non-inert, with carry sensitivity at least 5x higher than the first round's `full`.
+- After the same 40 adaptation transitions, it matches `latent_opt` on interp, with no test-time gradients.
+- It fails out-of-family as the latent does, losing to RLS. So it is an amortized latent rather than a new capacity class.
+- H9 revisited: its residual or error signal beats the simplified baseline at detecting shift. The first round's baseline
+  saw prediction error and the residual did not, so this is a fair retest.
+- Kill: no better than the first round's `full` on interp after adaptation, or state stays inert.
+
+### Parked
+
+- **H3's collinearity clause:** needs a real manipulation, such as controlling N against F with a check that the measures move.
+- **H7:** trained loops were never high. Retest only if H14 makes loops useful.
+- **H8:** the post hoc effect above trained depth stands unregistered.
+- **H11 agent weight edits:** needs a runtime for forward passes. Run on a family that passes its gates.
+
 ## Order of work
 
 1. Benchmark, models, and Thread A, since everything else reuses them.

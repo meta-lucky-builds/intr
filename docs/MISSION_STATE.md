@@ -82,6 +82,22 @@ implement rigorously, test in the cloud, and commit to `meta-lucky-builds/intr` 
    the full run does not report calibration.
 3. Read leads between threads.
 
+## Decisions after round one (full table in `docs/RESULTS.md`)
+
+| Line of work | Decision | Reason |
+|---|---|---|
+| H1 crossover | Replicate | Clear on pendulum only; puck cannot test it |
+| H2 hybrid | Refine as H12 | Failed through one validation-chosen `lambda` across regimes |
+| H3 RLS vs gradient | Park | Tuned gradient matches in-family; collinearity half untested |
+| H4 calibration | Continue | Ranking works on pendulum, magnitudes do not under shift |
+| H5, H6 | Continue, restated | Coverage is the lever; pendulum and second family only |
+| H7 | Park | Loops never trained deep; depends on H14 |
+| H8 | Drop as registered | No effect at trained depth |
+| H9 | Drop as registered; retest inside H14 | Loop never saw its error |
+| H10 forgetting | Refine as H13 | Reset wins; plain forgetting loses its prior |
+| Puck | Repair, gate G1 | Model underfits contact; nulls are uninformative |
+| Stored `outcome` fields | Fix later, own commit | `docs/RESULTS.md` scores from rule text; no verdict changes |
+
 ## Current run
 
 Pilot succeeded: seed 0 took about 3 minutes for pendulum and 5 for puck, against over an hour on Colab. The pendulum latent R2
