@@ -84,9 +84,12 @@ implement rigorously, test in the cloud, and commit to `meta-lucky-builds/intr` 
 
 ## Current run
 
-Thread A pilot, seed 0, Actions run 41760037725. Check with `gh run view 41760037725`. Pull before pushing, because the run
-commits results to this branch. When it ends: read minutes per job from the run summary, and compare with Colab seed 0.
-Persistence errors should match exactly; trained metrics may differ in rounding.
+Pilot succeeded: seed 0 took about 3 minutes for pendulum and 5 for puck, against over an hour on Colab. The pendulum latent R2
+matches Colab to about 6 decimals, so the runs agree across machines; only that field was compared. Thread A seeds 1-4 and
+full Threads B and C are requested. Find runs with `gh run list --branch mission/world-model-techniques`. Pull before pushing,
+because runs commit results to this branch. When they finish, write up verdicts per the protocol.
+
+Colab tools disappeared from the session after the pilot. Actions does not need them.
 
 ## Runtime notes
 
