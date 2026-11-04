@@ -295,6 +295,12 @@ Predictions:
   gradient matches in-family, RLS wins on shifted data, at much lower write cost. Kill: tuned gradient wins any tier.
 - **H17 capacity curve (descriptive).** Latent size 2, 8, 32, on three seeds per family. Tests the capacity account directly:
   larger latents should not rescue out-of-family error. Reported with no verdict.
+- Implementation choices fixed before any pixel run:
+  - **H4p error:** physical one-step error decides, for consistency with the metric rule above. The embedding-space result is
+    stored and flagged, and does not decide.
+  - **Collapse rule:** a model gets no verdict if its probe explains too little of the state; threshold 0.5, as coded.
+  - **Pilot:** seed 1010 is used only for the preflight pilot and reads validation data only. It is outside seeds 10-19 and is
+    not evidence.
 - The state-based Thread F and H14 runs are stopped. Their code remains in the repo, unused by this thread where noted.
 
 ### Parked

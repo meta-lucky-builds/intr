@@ -98,6 +98,14 @@ implement rigorously, test in the cloud, and commit to `meta-lucky-builds/intr` 
 | Puck | Repair, gate G1 | Model underfits contact; nulls are uninformative |
 | Stored `outcome` fields | Fix later, own commit | `docs/RESULTS.md` scores from rule text; no verdict changes |
 
+## Current focus (user instruction, overrides older next steps)
+
+Only Thread P: small pixel experiments on a GPU the user will rent, multi-GPU, one command in a Jupyter terminal. Do not start
+Thread F, Thread E, or other side work. Steps: finish code (`src/intr/pixel/`, `experiments/thread_p.py`, `scripts/gpu_run.sh`,
+`docs/GPU_RUN.md`); test on cloud CPU through Actions; give the user the command only after tests and smoke pass; score results
+when they arrive. If the build agent was interrupted, send it a message to continue. No code runs locally. No token ever goes into
+the repo or the chat. Gate G1 passed on seeds 5-9: puck with `capacity_updates` (success 0.84, gain 0.42), drone with `round_one`.
+
 ## Current run
 
 Pilot succeeded: seed 0 took about 3 minutes for pendulum and 5 for puck, against over an hour on Colab. The pendulum latent R2
