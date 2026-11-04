@@ -43,7 +43,7 @@ Pendulum, 10 fresh seeds, same effect rule.
 | Physics | Latent | Better RLS | Winner |
 |---|---|---|---|
 | Familiar | **0.251** | 0.401 | Latent, 37% lower, 10/10 seeds |
-| Unfamiliar | **0.718** | 0.817 | Latent, 12% lower, 10/10 seeds |
+| Unfamiliar | **0.718** | 0.816 | Latent, 12% lower, 10/10 seeds |
 
 The registered kill fired: one method won both tiers.
 
@@ -73,7 +73,7 @@ A diagnostic points to a possible cause: on drone and puck, an embedding's error
 Two registered repairs failed, and the registered stopping rule ended the attempts:
 
 - An inverse-dynamics loss fixed the encoder's reading of velocity on puck (R² 0.28 to 0.90) but not the gate.
-- Holding each action for three steps lifted drone past the 10% loss bar but broke control on all three families.
+- Holding each action for three steps lifted drone past the 10% loss bar but broke control on pendulum (0.825 to 0.10) and drone (0.5 to 0.175). Puck was already failing.
 
 ### 5. RLS uncertainty ranks errors from state, but not usefully from pixels
 
@@ -124,7 +124,7 @@ An RLS write is the posterior mean of Bayesian linear regression, so `phi' P phi
 
 ## How the claims are protected
 
-- **Written first:** hypotheses and kill criteria are in [HYPOTHESES.md](docs/HYPOTHESES.md), committed before results. Later ideas are marked post hoc and use new seeds.
+- **Written first:** hypotheses and kill criteria are in [HYPOTHESES.md](docs/HYPOTHESES.md), committed before results. Later hypotheses are marked post hoc and use new seeds. The encoder repairs reused pilot seed 1010, and post hoc readings reuse their own run's seeds.
 - **A high bar:** a win needs a paired bootstrap 95% CI that excludes 0 and at least a 10% reduction. Otherwise it counts as no detectable difference.
 - **Clean selection:** hyperparameters are chosen on validation environments only, and methods are compared on the same adaptation data.
 - **Gates before verdicts:** if the true-model planner cannot solve a task, or a model cannot support the test, that result is not counted as evidence.

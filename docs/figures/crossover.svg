@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 340" role="img" aria-labelledby="t d" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">
   <title id="t">Latent versus RLS error on pendulum, from state and from pixels</title>
-  <desc id="d">From state, the latent wins on familiar physics (0.044 vs 0.124) and RLS wins on unfamiliar physics (0.348 vs 0.718). From pixels, the latent wins both (0.251 vs 0.401 and 0.718 vs 0.817).</desc>
+  <desc id="d">From state, the latent wins on familiar physics (0.044 vs 0.124) and RLS wins on unfamiliar physics (0.348 vs 0.718). From pixels, the latent wins both (0.251 vs 0.401 and 0.718 vs 0.816).</desc>
   <rect width="760" height="340" fill="#ffffff"/>
   <g font-size="15" font-weight="600" fill="#1f2328" text-anchor="middle">
     <text x="205" y="28">From state: the methods cross over</text>
@@ -24,11 +24,11 @@
   </g>
   <g fill="#bc4c00">
     <rect x="132" y="245.2" width="48" height="24.8"/><rect x="277" y="200.4" width="48" height="69.6"/>
-    <rect x="497" y="189.8" width="48" height="80.2"/><rect x="642" y="106.6" width="48" height="163.4"/>
+    <rect x="497" y="189.8" width="48" height="80.2"/><rect x="642" y="106.8" width="48" height="163.2"/>
   </g>
   <g font-size="12" fill="#1f2328" text-anchor="middle">
     <text x="104" y="256">0.044</text><text x="156" y="240">0.124</text><text x="249" y="121">0.718</text><text x="301" y="195">0.348</text>
-    <text x="469" y="214">0.251</text><text x="521" y="184">0.401</text><text x="614" y="121">0.718</text><text x="666" y="101">0.817</text>
+    <text x="469" y="214">0.251</text><text x="521" y="184">0.401</text><text x="614" y="121">0.718</text><text x="666" y="101">0.816</text>
   </g>
   <g font-size="13" fill="#1f2328" text-anchor="middle">
     <text x="130" y="290">Familiar physics</text><text x="275" y="290">Unfamiliar physics</text>

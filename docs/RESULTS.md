@@ -530,7 +530,7 @@ Changes to any threshold or prediction need their own commit.
 | Stored `outcome` fields | Left as stored | This file scores from the rule text; no verdict changes |
 
 Later, work moved to pixels. The state-based runs of H12, H13, H5 and H14 were stopped before running, so their code in `experiments/thread_f.py` has tests but no full results.
-H6, H11 and Thread D were never run.
+H6 and H11 were never run.
 
 ## Benchmark repair: Gate G1
 
@@ -543,7 +543,7 @@ Full tables and the registrations written before each result are in the Thread P
 
 - **First pilot (run 41789738053):** pendulum passed Gate GP. Drone failed on the latent's 10% loss reduction (5.3%). Puck failed on control and reduction (0.2%). Moving from 32 to 48 px did not help.
 - **Round one of repair (run 41811136896):** an inverse-dynamics term raised puck agent velocity R2 from 0.28 to 0.90, but neither it nor a state-supervised encoder passed a second family.
-- **Round two (run 41827985599), the registered last round:** holding each action for 3 steps lifted drone's reduction to 12-13%, but broke closed-loop control on all three families. No setting passed, so drone and puck get no verdict.
+- **Round two (run 41827985599), the registered last round:** holding each action for 3 steps lifted drone's reduction to 12-13%, but broke closed-loop control on pendulum (0.825 to 0.10) and drone (0.5 to 0.175). Puck was already failing. No setting passed, so drone and puck get no verdict.
 - **Possible cause, not confirmed:** the error of a fit from true state to embedding, divided by the variance of the one-step embedding change, is about 1.1 on drone and puck and 0.03 on pendulum. Hidden physics may be buried in that error. A large ratio does not prove this, since the fit's error is only an upper bound on encoder noise.
 
 ## Thread P: pendulum on pixels (run 41841227508, seeds 10-19)
@@ -558,7 +558,7 @@ Decoded physical error at horizon 10, K = 1 decides. a vs b, lower is better; re
 | Hypothesis | Deciding comparison | a | b | 95% CI of a - b | Reduction | Outcome |
 |---|---|---|---|---|---|---|
 | H1p | latent vs better RLS, interp | 0.251 | 0.401 | [-0.163, -0.138] | 37.3%, latent, 10/10 seeds | Killed: latent wins both tiers |
-| H1p | latent vs better RLS, oof | 0.718 | 0.817 | [-0.110, -0.087] | 12.1%, latent, 10/10 seeds | |
+| H1p | latent vs better RLS, oof | 0.718 | 0.816 | [-0.110, -0.087] | 12.1%, latent, 10/10 seeds | |
 | H12p | hybrid vs better single, interp | 0.253 | 0.251 | [+0.000, +0.003] | 0.6%, hybrid worse | Supported, by the 10% threshold only |
 | H12p | same, extrap | 0.496 | 0.536 | [-0.048, -0.035] | 7.6%, hybrid better | |
 | H12p | same, oof | 0.778 | 0.718 | [+0.046, +0.076] | 7.8%, hybrid worse, 0/10 seeds better | |
