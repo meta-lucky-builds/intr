@@ -42,7 +42,7 @@ from intr.eval import HORIZONS, START_STEPS, CEMConfig, PersistencePredictor, co
 from intr.looped import SequenceData, saturation_reference  # noqa: E402
 from intr.models import clip_obs  # noqa: E402
 from intr.pixel import rules  # noqa: E402
-from intr.pixel.config import EMBED_DIMS, PROBE_TRAJECTORIES, Rung, ThreadPConfig, config_for  # noqa: E402
+from intr.pixel.config import EMBED_DIMS, PROBE_TRAJECTORIES, REPAIR_VARIANTS, Rung, ThreadPConfig, config_for  # noqa: E402
 from intr.pixel.design import collect_dopt, coverage_measures, design_predictor  # noqa: E402
 from intr.pixel.error_fed import Belief, ErrorFedConfig, ErrorFedPredictor, ErrorFedTrainConfig, other_env_donor, run_filter, train_error_fed  # noqa: E402
 from intr.pixel.planning import EvalContext, Windows, closed_loop_model, closed_loop_oracle, decoded_errors, errors_record, make_windows, record_of  # noqa: E402
@@ -155,7 +155,7 @@ def build_world(family: str, seed: int, cfg: ThreadPConfig, rung: Rung, device) 
     traj = collect_mixed_states(env, env_dev, cfg.train_traj, cfg.train_steps, env.data_policies, make_generator("data", family, seed), burn, device)
     frames = render(family, traj.states, rung.size)
     embed_dim = EMBED_DIMS[family]
-    encoder, jepa_stats = train_jepa(frames, traj.act, cfg.stack, embed_dim, rung, cfg.jepa, seed, device)
+    encoder, jepa_stats = train_jepa(frames, traj.act, cfg.stack, embed_dim, rung, cfg.jepa, seed, device, obs=traj.obs)
     emb = embed_frames(encoder, frames, cfg.stack)
     del frames
     if device.type == "cuda":
@@ -588,6 +588,8 @@ def run_pilot(family: str, seed: int, cfg: ThreadPConfig, rung: Rung, device) ->
         "family": family,
         "seed": seed,
         "rung": asdict(rung),
+        "repair_variant": cfg.repair_variant,
+        "jepa_settings": asdict(cfg.jepa),
         "gate": gate,
         "collapse": collapse,
         "oracle": oracle["success_rate"],
@@ -868,13 +870,14 @@ def run_bench(cfg: ThreadPConfig, seconds: float, device, jepa_only: bool) -> di
     T = 8
     frames = torch.randint(0, 256, (16, 4, cfg.stack + T, 3, rung.size, rung.size), dtype=torch.uint8).to(device)
     act = (2.0 * torch.rand(16, 4, T, 2) - 1.0).to(device)
+    obs = torch.randn(16, 4, T + 1, 7).to(device)  # read only if the state term is on
     n = 0
     began = time.perf_counter()
     from dataclasses import replace
 
     step = 20
     while time.perf_counter() - began < seconds:
-        train_jepa(frames, act, cfg.stack, 32, rung, replace(settings, steps=step), n, device)
+        train_jepa(frames, act, cfg.stack, 32, rung, replace(settings, steps=step), n, device, obs=obs)
         n += 1
     jepa_rate = n * step * rung.jepa_scale / (time.perf_counter() - began)
     out = {"jepa_steps_per_s": jepa_rate, "device": str(device)}
@@ -967,9 +970,12 @@ def main(argv=None) -> int:
     parser.add_argument("--families", nargs="+", default=None)
     parser.add_argument("--seconds", type=float, default=15.0)
     parser.add_argument("--jepa-only", action="store_true")
+    parser.add_argument("--repair-variant", default=None, choices=sorted(REPAIR_VARIANTS))
     args = parser.parse_args(argv)
 
-    cfg = config_for(args.mode)
+    cfg = config_for(args.mode, args.repair_variant)
+    if args.repair_variant and (args.kind != "pilot" or args.seed != cfg.pilot_seed):
+        parser.error(f"a repair variant runs only the pilot job on seed {cfg.pilot_seed}, got {args.kind} on seed {args.seed}")
     if args.families:
         cfg.families = args.families
     torch.set_num_threads(int(os.environ.get("INTR_THREADS", cfg.threads)))

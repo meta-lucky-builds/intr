@@ -10,7 +10,7 @@ puck passes its gate only with capacity_updates (seeds 5-9), and drone and pendu
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 
 FAMILIES = ("pendulum", "drone", "puck")
 REGISTERED_SEEDS = tuple(range(10, 20))
@@ -18,6 +18,7 @@ PILOT_SEED = 1010  # outside the registered seeds, so the ladder is chosen witho
 NO_WRITE_LAMBDA = 1e12  # intr.ebayes.NO_WRITE_LAMBDA; a test checks they agree
 PROBE_TRAJECTORIES = 3  # always drawn, then cut to K, so K = 1 data never depends on which K a config lists (Problem 12)
 EMBED_DIMS = {"pendulum": 16, "drone": 24, "puck": 32}  # about 4x the physical state, so anti-collapse need not invent features
+REPAIR_VARIANTS = {"idm": {"idm_weight": 1.0}, "state": {"state_weight": 1.0}}  # registered in docs/HYPOTHESES.md, Thread P
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,8 @@ class JepaSettings:
     cov_weight: float = 0.04
     predictor_hidden: int = 256
     grad_clip: float = 5.0
+    idm_weight: float = 0.0  # inverse dynamics term. Zero is today's objective exactly
+    state_weight: float = 0.0  # state-auxiliary control on the observable obs. Zero is today's objective exactly
 
 
 @dataclass(frozen=True)
@@ -127,6 +130,7 @@ class ThreadPConfig:
     design_lambda_max: float = 100.0  # as in Thread F: D-optimal design at a no-write lambda would only maximize ||phi||
     error_fed: ErrorFedSettings = field(default_factory=ErrorFedSettings)
     threads: int = 2
+    repair_variant: str | None = None  # set only by with_repair_variant: the pilot stage alone, at rung 0, on the pilot seed
 
     def fingerprint_view(self) -> dict:
         """Everything that changes a job's numbers. Seed and family lists do not, so a run can be extended."""
@@ -181,12 +185,24 @@ def smoke_config() -> ThreadPConfig:
     )
 
 
-def config_for(mode: str) -> ThreadPConfig:
+def with_repair_variant(cfg: ThreadPConfig, variant: str) -> ThreadPConfig:
+    """The same settings with one encoder objective changed, at rung 0, with no registered seed left to run."""
+    cfg.jepa = replace(cfg.jepa, **REPAIR_VARIANTS[variant])
+    cfg.repair_variant = variant
+    cfg.rungs = cfg.rungs[:1]
+    cfg.seeds = []
+    cfg.h17_seeds = []
+    return cfg
+
+
+def config_for(mode: str, repair_variant: str | None = None) -> ThreadPConfig:
     if mode == "full":
-        return full_config()
-    if mode == "smoke":
-        return smoke_config()
-    raise ValueError(f"unknown mode {mode!r}")
+        cfg = full_config()
+    elif mode == "smoke":
+        cfg = smoke_config()
+    else:
+        raise ValueError(f"unknown mode {mode!r}")
+    return cfg if repair_variant is None else with_repair_variant(cfg, repair_variant)
 
 
 def estimate_job_seconds(cfg: ThreadPConfig, family: str, bench: dict, jobs_per_gpu: int) -> dict:

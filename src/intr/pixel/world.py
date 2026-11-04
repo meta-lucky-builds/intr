@@ -22,6 +22,12 @@ The recipe, with reasons:
 5. torch.compile is not used. Training takes minutes, compile costs a good part of a minute per process, it could not be tested
    here, and EMA parameter handling across a compiled module is one more way to be wrong.
 
+6. Two optional encoder terms, both off by default, built only when their weight is non-zero, and dropped when training ends. Only
+   the EMA encoder leaves train_jepa. Inverse dynamics (as in PLDM, Sobal et al.): windows 0 and 1 of the online encoder predict action
+   0, which is the action taking the last frame of window 0 to the last frame of window 1. State control: window 0 of the online
+   encoder predicts the standardized observation of its last frame, obs[t] for frames t .. t + stack - 1, since stored states start
+   stack - 1 steps before obs[0]. env.obs reads the state and no hidden parameter, and train_jepa never sees an environment.
+
 The probe reads embeddings computed under no_grad on training environments only. fit_probe refuses any other tier.
 """
 
@@ -78,6 +84,38 @@ class JepaPredictor(nn.Module):
         return s + self.net(torch.cat([s, a.to(s.dtype)], dim=-1))
 
 
+def aux_mlp(in_dim: int, hidden: int, out_dim: int) -> nn.Sequential:
+    return nn.Sequential(nn.Linear(in_dim, hidden), nn.GELU(), nn.Linear(hidden, hidden), nn.GELU(), nn.Linear(hidden, out_dim))
+
+
+class InverseDynamicsHead(nn.Module):
+    """(s_t, s_t+1) -> a_t. Training only."""
+
+    def __init__(self, embed_dim: int, act_dim: int, hidden: int):
+        super().__init__()
+        self.net = aux_mlp(2 * embed_dim, hidden, act_dim)
+
+    def forward(self, s0: Tensor, s1: Tensor) -> Tensor:
+        return self.net(torch.cat([s0, s1], dim=-1))
+
+
+class StateAuxHead(nn.Module):
+    """s_t -> standardized observable obs_t. Training only. The scale comes from the training observations given here."""
+
+    def __init__(self, embed_dim: int, train_obs: Tensor, hidden: int):
+        super().__init__()
+        flat = train_obs.reshape(-1, train_obs.shape[-1])
+        self.register_buffer("obs_mean", flat.mean(0))
+        self.register_buffer("obs_std", flat.std(0).clamp_min(1e-6))
+        self.net = aux_mlp(embed_dim, hidden, flat.shape[-1])
+
+    def standardize(self, obs: Tensor) -> Tensor:
+        return (obs - self.obs_mean) / self.obs_std
+
+    def forward(self, s0: Tensor) -> Tensor:
+        return self.net(s0)
+
+
 def var_cov_terms(z: Tensor) -> tuple[Tensor, Tensor]:
     """VICReg's two anti-collapse terms on (N, D), float32."""
     z = z - z.mean(dim=0)
@@ -89,9 +127,16 @@ def var_cov_terms(z: Tensor) -> tuple[Tensor, Tensor]:
     return variance, (off**2).sum() / d
 
 
-def jepa_loss(online: nn.Module, target: nn.Module, predictor: nn.Module, frames: Tensor, actions: Tensor, stack: int, s: JepaSettings, device_type: str, amp: bool) -> tuple[Tensor, dict]:
-    """frames (b, H + stack, 3, h, w) uint8, actions (b, H, A)."""
+def jepa_loss(
+    online: nn.Module, target: nn.Module, predictor: nn.Module, frames: Tensor, actions: Tensor, stack: int, s: JepaSettings, device_type: str, amp: bool,
+    idm_head: nn.Module | None = None, state_head: nn.Module | None = None, obs0: Tensor | None = None,
+) -> tuple[Tensor, dict]:
+    """frames (b, H + stack, 3, h, w) uint8, actions (b, H, A), obs0 (b, O) the observation of window 0's last frame.
+
+    A term with weight zero is not computed, whatever heads are given, so the online encoder runs no extra forward for it.
+    """
     b, H = actions.shape[0], actions.shape[1]
+    extra: dict[str, tuple[float, Tensor]] = {}
     with torch.autocast(device_type=device_type, dtype=torch.bfloat16, enabled=amp):
         windows = torch.stack([frames[:, i : i + stack] for i in range(1, H + 1)], dim=1)  # (b, H, stack, 3, h, w)
         with torch.no_grad():
@@ -103,20 +148,34 @@ def jepa_loss(online: nn.Module, target: nn.Module, predictor: nn.Module, frames
             current = predictor(current, actions[:, i])
             sim = sim + ((current.float() - goal[:, i]) ** 2).mean()
         sim = sim / H
+        if s.idm_weight != 0.0:
+            s1 = online(stack_windows(frames[:, 1 : 1 + stack]))
+            extra["idm"] = (s.idm_weight, ((idm_head(s0, s1).float() - actions[:, 0].float()) ** 2).mean())
+        if s.state_weight != 0.0:
+            extra["state"] = (s.state_weight, ((state_head(s0).float() - state_head.standardize(obs0)) ** 2).mean())
     with torch.autocast(device_type=device_type, enabled=False):
         variance, covariance = var_cov_terms(s0.float())
     loss = s.sim_weight * sim + s.var_weight * variance + s.cov_weight * covariance
-    return loss, {"sim": sim.detach(), "var": variance.detach(), "cov": covariance.detach()}
+    parts = {"sim": sim.detach(), "var": variance.detach(), "cov": covariance.detach()}
+    for name, (weight, term) in extra.items():
+        loss = loss + weight * term
+        parts[name] = term.detach()
+    return loss, parts
 
 
-def train_jepa(frames: Tensor, act: Tensor, stack: int, embed_dim: int, rung: Rung, s: JepaSettings, seed, device, amp: bool | None = None) -> tuple[ConvEncoder, dict]:
-    """frames (E, B, stack + T, 3, h, w) uint8, act (E, B, T, A), both on device. Returns the frozen EMA encoder."""
+def train_jepa(frames: Tensor, act: Tensor, stack: int, embed_dim: int, rung: Rung, s: JepaSettings, seed, device, amp: bool | None = None, obs: Tensor | None = None) -> tuple[ConvEncoder, dict]:
+    """frames (E, B, stack + T, 3, h, w) uint8, act (E, B, T, A), both on device. Returns the frozen EMA encoder.
+
+    obs (E, B, T + 1, O) on device, training environments only, read only when state_weight is non-zero.
+    """
     started = time.perf_counter()
     device = torch.device(device)
     E, B, F_total = frames.shape[:3]
     T = act.shape[2]
     if F_total != stack + T:
         raise ValueError(f"{F_total} frames do not fit {T} transitions with a stack of {stack}")
+    if s.state_weight != 0.0 and (obs is None or obs.shape[:3] != (E, B, T + 1)):
+        raise ValueError("state_weight needs observations of shape (E, B, T + 1, O)")
     H = min(s.rollout, T)
     use_amp = amp if amp is not None else (device.type == "cuda" and torch.cuda.is_bf16_supported())
     torch.manual_seed(derive_seed("init", seed, "jepa"))
@@ -124,6 +183,12 @@ def train_jepa(frames: Tensor, act: Tensor, stack: int, embed_dim: int, rung: Ru
     predictor = JepaPredictor(embed_dim, act.shape[-1], s.predictor_hidden).to(device)
     target = copy.deepcopy(online).requires_grad_(False)
     params = list(online.parameters()) + list(predictor.parameters())
+    # Built after the encoder and predictor, so every variant starts from the same weights and draws the same batches.
+    idm_head = InverseDynamicsHead(embed_dim, act.shape[-1], s.predictor_hidden).to(device) if s.idm_weight != 0.0 else None
+    state_head = StateAuxHead(embed_dim, obs, s.predictor_hidden).to(device) if s.state_weight != 0.0 else None
+    for head in (idm_head, state_head):
+        if head is not None:
+            params += list(head.parameters())
     optimizer = torch.optim.Adam(params, lr=s.lr)
     gen = make_generator("train", seed, "jepa")
     total = s.steps * rung.jepa_scale
@@ -135,7 +200,8 @@ def train_jepa(frames: Tensor, act: Tensor, stack: int, embed_dim: int, rung: Ru
         e = torch.randint(E, (s.batch, 1), generator=gen).to(device)
         b = torch.randint(B, (s.batch, 1), generator=gen).to(device)
         t = torch.randint(T - H + 1, (s.batch, 1), generator=gen).to(device)
-        loss, parts = jepa_loss(online, target, predictor, frames[e, b, t + frame_offsets], act[e, b, t + action_offsets], stack, s, device.type, use_amp)
+        obs0 = obs[e[:, 0], b[:, 0], t[:, 0]] if state_head is not None else None
+        loss, parts = jepa_loss(online, target, predictor, frames[e, b, t + frame_offsets], act[e, b, t + action_offsets], stack, s, device.type, use_amp, idm_head, state_head, obs0)
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(params, s.grad_clip)

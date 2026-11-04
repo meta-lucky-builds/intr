@@ -106,6 +106,10 @@ Thread F, Thread E, or other side work. Steps: finish code (`src/intr/pixel/`, `
 when they arrive. If the build agent was interrupted, send it a message to continue. No code runs locally. No token ever goes into
 the repo or the chat. Gate G1 passed on seeds 5-9: puck with `capacity_updates` (success 0.84, gain 0.42), drone with `round_one`.
 
+2026-11-04: the repo is public, so no token is needed. The GPU command at d3653ad works, but only pendulum is expected to pass Gate GP
+(pilot run 41789738053). An encoder repair is under test on seed 1010 through `.github/workflows/pixel-repair.yml`, registered in the
+Thread P section of `docs/HYPOTHESES.md`. `full_config()` stays unchanged until the user chooses a variant from those results.
+
 ## Current run
 
 Pilot succeeded: seed 0 took about 3 minutes for pendulum and 5 for puck, against over an hour on Colab. The pendulum latent R2

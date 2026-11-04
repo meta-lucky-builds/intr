@@ -9,6 +9,9 @@ Stages, so the main verdicts cannot wait on or be damaged by the rest:
 
 A summary and a tar are written after every stage. The folder name includes a fingerprint of the source and settings, so a rerun of the same
 code resumes, and changed code starts a new folder instead of mixing results.
+
+--repair-variant idm|state runs the pilot stage alone, at rung 0, on the pilot seed, with that encoder objective, and then stops. No registered
+seed starts, in the tiny preflight job either.
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .config import EMBED_DIMS, ThreadPConfig, config_for, estimate_job_seconds
+from .config import EMBED_DIMS, REPAIR_VARIANTS, ThreadPConfig, config_for, estimate_job_seconds
 from .publish import TOKEN_VAR, make_tar, publish_results, redact, scrub_origin
 from .scheduler import Job, RunReport, Slot, atomic_write_json, choose_concurrency, discover_gpus, is_complete, plan_slots, run_jobs, worker_env
 
@@ -61,6 +64,10 @@ class Paths:
 
 def worker(mode: str, kind: str, *extra: str) -> list[str]:
     return [sys.executable, str(ROOT / "experiments" / "thread_p.py"), "--kind", kind, "--mode", mode, *extra]
+
+
+def variant_args(cfg: ThreadPConfig) -> list[str]:
+    return ["--repair-variant", cfg.repair_variant] if cfg.repair_variant else []
 
 
 def job_for(paths: Paths, mode: str, kind: str, family: str, seed: int, fingerprint: str, rung: int = 0) -> Job:
@@ -138,10 +145,13 @@ def preflight_each_gpu(paths: Paths, mode: str, cfg: ThreadPConfig, slots_one_ea
     for job in checks:
         data = read_json(job.output, {})
         say(f"  {job.name}: {data.get('checks')}")
-    tiny = [
-        Job(f"tiny_{i}", worker("smoke", "main", "--family", cfg.families[0], "--seed", "10", "--run-dir", str(root / f"tiny_{i}"), "--out", str(root / f"tiny_{i}.json"), "--fingerprint", fingerprint), root / f"tiny_{i}.json", paths.logs / f"tiny_{i}.log", fingerprint)
-        for i in range(len(slots_one_each))
-    ]
+
+    def tiny_argv(i: int) -> list[str]:
+        if cfg.repair_variant:  # validation of the pilot seed only: a main job would touch seed 10 and create test tiers
+            return worker("smoke", "pilot", "--family", cfg.families[0], "--seed", str(cfg.pilot_seed), *variant_args(cfg), "--out", str(root / f"tiny_{i}.json"), "--fingerprint", fingerprint)
+        return worker("smoke", "main", "--family", cfg.families[0], "--seed", "10", "--run-dir", str(root / f"tiny_{i}"), "--out", str(root / f"tiny_{i}.json"), "--fingerprint", fingerprint)
+
+    tiny = [Job(f"tiny_{i}", tiny_argv(i), root / f"tiny_{i}.json", paths.logs / f"tiny_{i}.log", fingerprint) for i in range(len(slots_one_each))]
     report = run_jobs(tiny, slots_one_each, "tiny end-to-end", max_attempts=1, progress=say)
     for name, failure in report.failed.items():
         say(f"PREFLIGHT FAILED: the tiny job {name} crashed. Do not spend on this run.\n{failure['tail']}")
@@ -217,7 +227,7 @@ def run_pilot_ladder(paths: Paths, mode: str, cfg: ThreadPConfig, slots: list[Sl
         for family, rung in pending.items():
             name = f"pilot_{family}_r{rung}"
             out = paths.pilot / f"{name}.json"
-            jobs[family] = Job(name, worker(mode, "pilot", "--family", family, "--seed", str(cfg.pilot_seed), "--rung", str(rung), "--out", str(out), "--fingerprint", fingerprint), out, paths.logs / f"{name}.log", fingerprint)
+            jobs[family] = Job(name, worker(mode, "pilot", "--family", family, "--seed", str(cfg.pilot_seed), "--rung", str(rung), *variant_args(cfg), "--out", str(out), "--fingerprint", fingerprint), out, paths.logs / f"{name}.log", fingerprint)
         report = run_jobs(list(jobs.values()), slots, "pilot", progress=say)
         next_pending = {}
         for family, job in jobs.items():
@@ -240,6 +250,16 @@ def run_pilot_ladder(paths: Paths, mode: str, cfg: ThreadPConfig, slots: list[Sl
     choice = {"fingerprint": fingerprint, "status": "ok", "rungs": rungs, "skipped": skipped, "gates": results, "pilot_seed": cfg.pilot_seed}
     atomic_write_json(choice_path, choice)
     return choice
+
+
+def finish_repair(paths: Paths, cfg: ThreadPConfig) -> int:
+    """The end of a repair run, pass or fail on the gate. A pilot job that crashed is an error, not a gate result."""
+    crashed = [f for f in cfg.families if read_json(paths.pilot / f"pilot_{f}_r0.json", {}).get("status") != "ok"]
+    if crashed:
+        say(f"Repair variant {cfg.repair_variant}: the pilot job crashed for {crashed}. See {paths.logs}")
+        return 1
+    say(f"Repair variant {cfg.repair_variant}: stopping after rung 0 of the pilot on seed {cfg.pilot_seed}. No registered seed was started.")
+    return 0
 
 
 def summarize(paths: Paths, mode: str, cfg: ThreadPConfig, fingerprint: str) -> None:
@@ -288,10 +308,13 @@ def main(argv=None) -> int:
     parser.add_argument("--allow-cpu", action="store_true", help="run the full settings without a GPU, which would take days")
     parser.add_argument("--jobs-per-gpu", type=int, default=None, help="skip the measurement")
     parser.add_argument("--no-publish", action="store_true")
+    parser.add_argument("--repair-variant", default=None, choices=sorted(REPAIR_VARIANTS), help="pilot stage only, rung 0, pilot seed, with this encoder objective")
     args = parser.parse_args(argv)
+    if args.repair_variant and args.seeds:
+        parser.error("--repair-variant runs the pilot seed only, so it takes no --seeds")
 
     mode = "smoke" if args.smoke else "full"
-    cfg = config_for(mode)
+    cfg = config_for(mode, args.repair_variant)
     if args.families:
         cfg.families = args.families
     if args.seeds:
@@ -315,14 +338,15 @@ def main(argv=None) -> int:
         return EXIT_PREFLIGHT
     atomic_write_json(paths.run / "manifest.json", machine_facts(ROOT, gpus, cores, hashes, cfg, fingerprint))
 
-    if not args.skip_tests and not run_tests(ROOT, paths):
+    # The test suite names seeds 10 and 11 in its tiny checks. A repair run leaves it to pixel-check.
+    if not args.skip_tests and not cfg.repair_variant and not run_tests(ROOT, paths):
         return EXIT_PREFLIGHT
     one_each = [Slot(g["index"], 2) for g in gpus] or [Slot(None, min(2, cores))]
     if not preflight_each_gpu(paths, mode, cfg, one_each, fingerprint):
         return EXIT_PREFLIGHT
 
     bench: dict = {}
-    if gpus and args.jobs_per_gpu is None:
+    if gpus and args.jobs_per_gpu is None and not cfg.repair_variant:
         jobs_per_gpu, bench = measure_concurrency(paths, mode, cfg, gpus[0], cores, fingerprint)
         say(f"Jobs per GPU: {jobs_per_gpu}. Measured: {bench}")
     else:
@@ -332,6 +356,8 @@ def main(argv=None) -> int:
     print_estimate(cfg, bench, jobs_per_gpu, len(slots))
 
     choice = run_pilot_ladder(paths, mode, cfg, slots, fingerprint)
+    if cfg.repair_variant:
+        return finish_repair(paths, cfg)
     families = [f for f in cfg.families if f in choice["rungs"]]
     skipped = sorted(choice["skipped"])
     pilot_walls = [read_json(p, {}).get("wall_s") for p in paths.pilot.glob("pilot_*.json")]

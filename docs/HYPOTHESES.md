@@ -303,6 +303,34 @@ Predictions:
     not evidence.
 - The state-based Thread F and H14 runs are stopped. Their code remains in the repo, unused by this thread where noted.
 
+**Encoder repair, registered 2026-11-04, before any repair result (post hoc: formed after the pilot).**
+
+Pilot result (run 41789738053, seed 1010, validation only), with Gate GP as registered above:
+
+| Family | Image | Frozen | Oracle | Latent reduction | Gate | Probe R2 |
+|---|---|---|---|---|---|---|
+| pendulum | 32 px | 0.875 | 0.925 | 39% | pass | 0.997-0.9997, all dimensions |
+| drone | 32, 48 px | 0.5, 0.6 | 1.0 | 5.3%, 4.8% | fail, on reduction only | about 0.97 on x, z, cos, sin; about 0.5 on vx, vz, omega |
+| puck | 32, 48 px | 0.0 | 1.0 | 0.2%, 0.4% | fail | agent position 0.64, 0.60; puck position 0.97; agent velocity 0.28, 0.25; puck velocity 0.73 |
+
+Drone frames were offscreen (position clamped in the image) 30% of the time. Larger images did not help.
+
+- **Diagnosis, a hypothesis and not a fact:** the JEPA slow-feature trap. `jepa_loss` rewards predictable, slow features, so the
+  actuated fast object and velocities are poorly encoded. The embedding is then non-Markov, and irreducible error swamps the latent's gain.
+- **Prediction:** adding an inverse-dynamics term (`idm`, as in PLDM, Sobal et al.) raises velocity and agent R2 on puck and drone, and
+  the reduction then passes the unchanged 10% gate.
+- **Variants, weights fixed at 1.0:** `idm` (`idm_weight` = 1) maps online embeddings of windows 0 and 1 to action 0. `state`
+  (`state_weight` = 1) is a control that maps the online embedding of window 0 to the standardized observable observation of that window's
+  last frame, never a hidden parameter, with the scale from training data. Both heads are MLPs the size of the JEPA predictor, are
+  dropped after training, and var and cov stay as they are.
+- **Scope:** thresholds unchanged. Seed 1010 only, validation only, rung 0 only (32 px), with otherwise real settings. The repair path stops
+  before any registered seed starts, and its tiny preflight job also uses seed 1010.
+- **Decision rule:** one encoder objective for all families. Prefer `idm` if pendulum still passes and at least one more family passes.
+  Use `state` only if `idm` fails that, and then label every verdict as using a state-supervised encoder. A family still failing stays
+  ungated, with no verdict.
+- **Registered seeds so far:** the CPU pilot workflow ran into main-stage jobs for pendulum seeds 10-12 by design. Those records were not
+  read and are not scored. Only a timing and validation-selection log line for seed 10 was seen, and the GPU run re-trains anyway.
+
 ### Parked
 
 - **H3's collinearity clause:** needs a real manipulation, such as controlling N against F with a check that the measures move.
