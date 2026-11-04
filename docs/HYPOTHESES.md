@@ -369,6 +369,9 @@ Probe R2: puck `idm` agent position 0.99, agent velocity 0.90, puck velocity 0.7
   per-dimension values, delta variance and embedding variance.
 - **Predictions, with a repeat of 3 at unchanged thresholds:** reduction rises on drone and puck against repeat 1 with the same objective, and the ratio falls.
 - **Falsifier:** if the ratio at repeat 1 is small (under 0.1) on drone and puck, the explanation is wrong, whatever the gate does.
+- **Limits of this test, added before any round-two result:** the ratio falling is close to automatic, since delta variance grows with the step for any moving
+  object, so only the reduction tests that prediction. A large ratio does not confirm the explanation: the residual includes MLP underfit and anything the window
+  holds beyond the current obs, so it only bounds encoder noise from above. A reduction that passes at repeat 3 shows the setting works, not why.
 - **Arms:** (`idm`, repeat 1), (`idm`, repeat 3), (`state`, repeat 3), on pendulum, drone and puck. Seed 1010 only, validation only, rung 0 only.
 - **Stopping rule:** this is the last repair round. Adopt a setting only if pendulum passes and at least one more family passes, preferring `idm` over
   `state`, and label `state` as state-supervised. Otherwise the GPU run is pendulum only at the default objective and repeat 1, and drone and puck are
